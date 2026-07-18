@@ -207,6 +207,22 @@ The output JSON file will contain an array of result objects, each with the foll
 ]
 ```
 
+#### LLM-as-a-Verifier selection (`--verifier`)
+
+Pass `--verifier` to rank candidates with the LLM-as-a-Verifier scorer (Claude
+Sonnet 4) instead of the single-shot o1 majority vote. Each candidate is scored
+independently on a fine-grained 0-100 scale across multiple criteria
+(correctness, completeness, minimality), and the highest-scoring candidate is
+selected. This continuous, criterion-decomposed scoring is adapted from
+*LLM-as-a-Verifier* (arXiv:2607.05391); see `utils/solution_verifier.py`.
+
+```bash
+python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier
+```
+
+This makes it straightforward to A/B test the two selection strategies on the
+same candidate set.
+
 ## Development
 
 ### Running Tests
