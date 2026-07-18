@@ -11,6 +11,16 @@ observed_landing_zones:
     branch: llm-as-a-verifier-a-general-purpose-verification-framework
     timestamp: '2026-07-18T00:37:56Z'
   last_observed: '2026-07-18T00:37:56Z'
+- path: tools/
+  shape_tags:
+  - unclassified
+  confirmed_by:
+  - arxiv: 2607.13034v1
+    mode: ''
+    call_site_specifics: ''
+    branch: do-ai-agents-know-when-a-task-is-simple-toward-complexity-aw
+    timestamp: '2026-07-18T20:24:08Z'
+  last_observed: '2026-07-18T20:24:08Z'
 rejected_shapes: []
 coordination_signals: []
-last_updated: '2026-07-18T00:37:56Z'
+last_updated: '2026-07-18T20:24:08Z'
