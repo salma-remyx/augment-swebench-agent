@@ -19,12 +19,19 @@ ranking intact, while substituting one auxiliary component:
 
 Preserved from the paper:
   * Score granularity -- a fine-grained 0-100 scale rather than a discrete pick.
-  * Repeated evaluation -- averaging ``num_samples`` independent scores reduces
-    scoring variance.
+  * Repeated evaluation -- when ``num_samples > 1`` the candidate is re-scored
+    with stochastic sampling (a nonzero ``sample_temperature``) and the scores
+    are averaged, so the mean is a Monte Carlo estimate of the score
+    expectation. This is the parameter-free stand-in for the paper's expectation
+    over scoring-token logits, and it is what actually reduces scoring variance:
+    at ``temperature == 0`` repeated calls are deterministic and average to
+    themselves, giving no variance reduction.
   * Criteria decomposition -- scoring each candidate on multiple criteria and
     aggregating reduces task complexity.
   * Cost-efficient ranking -- each candidate is scored independently (no
-    all-pairs comparisons) and selected by argmax over aggregate scores.
+    all-pairs comparisons) and ranked by aggregate score, so cost scales
+    linearly in the number of candidates. ``rank_candidates`` exposes the full
+    continuous ranking; ``select`` returns its argmax.
 
 ``select`` exposes the same ``(instruction, candidates) -> selected index``
 contract as the existing majority-vote ensembler, so it drops in as an
@@ -57,6 +64,7 @@ def score_candidate(
     max_score: int = 100,
     max_tokens: int = 4096,
     temperature: float = 0.0,
+    sample_temperature: float = 0.7,
 ) -> float:
     """Score a single candidate on a continuous 0-``max_score`` scale.
 
@@ -64,16 +72,24 @@ def score_candidate(
     each criterion in ``criteria`` (criteria decomposition); the returned
     continuous score is the mean across samples and criteria. Returns 0.0 if
     the model emits no parseable score tags.
+
+    A single sample uses ``temperature`` (deterministic by default). Repeated
+    evaluation (``num_samples > 1``) instead samples at ``sample_temperature``
+    so the per-sample scores vary and their mean estimates the score
+    expectation -- averaging identical deterministic samples would reduce no
+    variance.
     """
     prompt = build_verifier_prompt(instruction, candidate, criteria, max_score)
     messages = [[TextPrompt(text=prompt)]]
+
+    effective_temperature = sample_temperature if num_samples > 1 else temperature
 
     sample_means: list[float] = []
     for _ in range(max(1, num_samples)):
         response, _metadata = client.generate(
             messages=messages,  # type: ignore
             max_tokens=max_tokens,
-            temperature=temperature,
+            temperature=effective_temperature,
         )
         first = response[0]
         text = first.text if hasattr(first, "text") else str(first)  # pyright: ignore[reportAttributeAccessIssue]
@@ -93,6 +109,7 @@ def score_candidates(
     num_samples: int = 1,
     criteria: tuple[str, ...] = DEFAULT_CRITERIA,
     max_score: int = 100,
+    sample_temperature: float = 0.7,
 ) -> list[float]:
     """Score every candidate independently, preserving input order.
 
@@ -102,10 +119,47 @@ def score_candidates(
     """
     return [
         score_candidate(
-            instruction, candidate, client, num_samples, criteria, max_score
+            instruction,
+            candidate,
+            client,
+            num_samples,
+            criteria,
+            max_score,
+            sample_temperature=sample_temperature,
         )
         for candidate in candidates
     ]
+
+
+def rank_candidates(
+    instruction: str,
+    candidates: list[str],
+    client: LLMClient,
+    num_samples: int = 1,
+    criteria: tuple[str, ...] = DEFAULT_CRITERIA,
+    max_score: int = 100,
+    sample_temperature: float = 0.7,
+) -> list[tuple[int, float]]:
+    """Rank candidates by continuous verification score, best first.
+
+    Returns ``(original_index, score)`` pairs sorted by descending score; ties
+    preserve input order (stable sort). Exposing the full continuous ranking --
+    not just the winner -- is what the paper's fine-grained score is for: it can
+    drive candidate selection, serve as a task-progress proxy, or feed a reward
+    signal, all of which a single discrete pick discards.
+    """
+    scores = score_candidates(
+        instruction,
+        candidates,
+        client,
+        num_samples,
+        criteria,
+        max_score,
+        sample_temperature=sample_temperature,
+    )
+    indexed = list(enumerate(scores))
+    indexed.sort(key=lambda pair: pair[1], reverse=True)
+    return indexed
 
 
 def select(
@@ -115,6 +169,7 @@ def select(
     num_samples: int = 1,
     criteria: tuple[str, ...] = DEFAULT_CRITERIA,
     max_score: int = 100,
+    sample_temperature: float = 0.7,
 ) -> Optional[int]:
     """Select the best candidate by continuous verification score.
 
@@ -129,13 +184,13 @@ def select(
     if client is None:
         client = get_client("anthropic-direct")
 
-    scores = score_candidates(
-        instruction, candidates, client, num_samples, criteria, max_score
+    ranking = rank_candidates(
+        instruction,
+        candidates,
+        client,
+        num_samples,
+        criteria,
+        max_score,
+        sample_temperature=sample_temperature,
     )
-    best_index = 0
-    best_score = scores[0]
-    for offset, score in enumerate(scores[1:], start=1):
-        if score > best_score:
-            best_score = score
-            best_index = offset
-    return best_index
+    return ranking[0][0]

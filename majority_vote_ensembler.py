@@ -55,6 +55,14 @@ def parse_args():
         help="Rank candidates with the LLM-as-a-Verifier scorer (Claude Sonnet 4) "
         "instead of the single-shot o1 majority vote",
     )
+    parser.add_argument(
+        "--verifier-samples",
+        type=int,
+        default=1,
+        help="Repeated-evaluation count for --verifier: score each candidate this "
+        "many times (with sampling) and average to reduce scoring variance "
+        "(default: 1)",
+    )
     return parser.parse_args()
 
 
@@ -261,7 +269,18 @@ def main():
     elif not os.environ.get("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY environment variable is not set")
         sys.exit(1)
-    selector = verifier_select if args.verifier else None
+
+    selector: Optional[Selector] = None
+    if args.verifier:
+
+        def _verifier_selector(
+            instruction: str, candidates: List[str]
+        ) -> Optional[int]:
+            return verifier_select(
+                instruction, candidates, num_samples=args.verifier_samples
+            )
+
+        selector = _verifier_selector
 
     # Load problems from JSON file
     problems = load_problems(args.input_jsonl_path)

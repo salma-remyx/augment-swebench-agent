@@ -220,6 +220,16 @@ selected. This continuous, criterion-decomposed scoring is adapted from
 python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier
 ```
 
+Add `--verifier-samples N` to enable the paper's *repeated evaluation* axis:
+each candidate is scored `N` times with sampling and the scores are averaged, so
+the mean is a Monte Carlo estimate of the score expectation (the parameter-free
+stand-in for the paper's expectation over scoring-token logits) and scoring
+variance is reduced. `N=1` (the default) keeps scoring deterministic.
+
+```bash
+python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier --verifier-samples 5
+```
+
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
 
