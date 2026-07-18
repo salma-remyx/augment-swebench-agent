@@ -241,3 +241,25 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Complexity-Aware Execution (E3)
+
+The agent estimates how much effort a task truly needs *before* spending its full
+turn budget, then executes a minimum viable path and expands only on failure.
+This is the **E3** (Estimate, Execute, Expand) strategy — adapted from
+[*Do AI Agents Know When a Task Is Simple? Toward Complexity-Aware Reasoning and
+Execution*](https://arxiv.org/abs/2607.13034).
+
+- `utils/task_complexity_estimator.py` — the **Estimate** step: a parameter-free
+  lexical-cue classifier with an optional single grep probe that maps an
+  instruction to a complexity tier (`SIMPLE` / `MODERATE` / `COMPLEX`) and a
+  minimum-viable turn budget.
+- `tools/agent.py` — the **Execute** + **Expand** steps: `Agent.run_impl` runs
+  the minimum-viable budget first and, if the agent exhausts it without
+  completing, grants the remaining turns up to the original `max_turns` cap. A
+  correct estimate makes a simple task cheap; a wrong estimate can never do
+  worse than the baseline budget.
+
+Inject a custom `TaskComplexityEstimator` into `Agent(...)` to override the
+per-tier turn budgets or the classification logic.
+

@@ -7,6 +7,7 @@ from utils.common import (
     ToolImplOutput,
 )
 from utils.llm_client import LLMClient, TextResult
+from utils.task_complexity_estimator import TaskComplexityEstimator
 from utils.workspace_manager import WorkspaceManager
 from tools.complete_tool import CompleteTool
 from prompts.system_prompt import SYSTEM_PROMPT
@@ -58,6 +59,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
         use_prompt_budgeting: bool = True,
         ask_user_permission: bool = False,
         docker_container_id: Optional[str] = None,
+        task_complexity_estimator: Optional[TaskComplexityEstimator] = None,
     ):
         """Initialize the agent.
 
@@ -73,6 +75,13 @@ try breaking down the task into smaller steps and call this tool multiple times.
         self.logger_for_agent_logs = logger_for_agent_logs
         self.max_output_tokens = max_output_tokens_per_turn
         self.max_turns = max_turns
+        # E3 Estimate step: produces a complexity-aware minimum-viable turn
+        # budget per task. Defaults to a parameter-free estimator; inject a
+        # custom one (e.g. a stub) for testing. See
+        # utils/task_complexity_estimator.py.
+        self.task_complexity_estimator = (
+            task_complexity_estimator or TaskComplexityEstimator()
+        )
         self.workspace_manager = workspace_manager
         self.interrupted = False
         self.dialog = DialogMessages(
@@ -125,8 +134,33 @@ try breaking down the task into smaller steps and call this tool multiple times.
         self.dialog.add_user_prompt(instruction)
         self.interrupted = False
 
-        remaining_turns = self.max_turns
-        while remaining_turns > 0:
+        # E3 (Estimate, Execute, Expand): estimate a complexity-aware
+        # minimum-viable turn budget and attempt it first; if the agent
+        # exhausts it without completing, expand once to the full cap so a
+        # correct estimate makes a simple task cheap while a wrong estimate
+        # can never do worse than the baseline. See
+        # utils/task_complexity_estimator.py.
+        operating_point = self.task_complexity_estimator.estimate(instruction)
+        first_phase_turns = min(operating_point.initial_turns, self.max_turns)
+        self.logger_for_agent_logs.info(
+            f"(E3 estimate: {operating_point.tier.value} task; "
+            f"minimum-viable budget {first_phase_turns}/{self.max_turns} turns)"
+        )
+
+        remaining_turns = first_phase_turns
+        expanded = False
+        while remaining_turns > 0 or (
+            not expanded and first_phase_turns < self.max_turns
+        ):
+            if remaining_turns <= 0:
+                # Expand: the minimum-viable path did not complete; grant the
+                # remaining turns up to the original cap and keep going.
+                expanded = True
+                remaining_turns = self.max_turns - first_phase_turns
+                self.logger_for_agent_logs.info(
+                    "(E3 expand: minimum-viable budget exhausted without "
+                    "completing; continuing to full cap)"
+                )
             remaining_turns -= 1
 
             delimiter = "-" * 45 + " NEW TURN " + "-" * 45
