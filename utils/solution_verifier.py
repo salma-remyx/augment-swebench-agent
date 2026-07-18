@@ -1,196 +1,207 @@
-"""Continuous per-candidate verification scoring for solution selection.
+"""Pairwise fine-grained verification for best-of-N solution selection.
 
-Adapted from "LLM-as-a-Verifier: A General-Purpose Verification Framework"
-(arXiv:2607.05391). The paper scores candidate solutions with a *continuous*
-signal -- an expectation over the distribution of scoring-token logits -- and
-ranks them, instead of asking a judge to emit a single discrete pick. That
-continuous, calibrated, decomposable score is what an argmax selects on, and
-the paper shows it beats single-shot discrete majority voting.
+Ported from "LLM-as-a-Verifier: A General-Purpose Verification Framework"
+(arXiv:2607.05391). The paper selects among candidate trajectories with a
+*pairwise* fine-grained reward model: the verifier sees two trajectories A and B
+together and emits a fine-grained score for each. Those directed comparisons are
+aggregated by a Probabilistic Pivot Tournament (PPT) -- a ring pass that cancels
+slot bias, pivot selection, pivot rounds, and Bradley-Terry soft wins -- so the
+best of N candidates is found in O(Nk) verifier calls rather than O(N^2).
 
-This module keeps the paper's three scaling axes and its cost-efficient
-ranking intact, while substituting one auxiliary component:
+This module keeps the paper's mechanism intact -- pairwise reward, per-criterion
+isolation, repeated evaluation, and the PPT / Bradley-Terry aggregation -- while
+substituting one auxiliary component:
 
-  * The paper's logprob-expectation estimator is replaced by a direct,
-    parameter-free numeric elicitation. The repo's Anthropic Messages client
-    does not expose token logprobs, so the continuous score is the model's
-    elicited expected quality per criterion, averaged over repeated samples.
-    Both formulations yield a continuous, calibrated, decomposable score; the
-    selection property the paper relies on is preserved.
+  * The paper reads the verifier's probability distribution over an ordered set
+    of score tokens and takes its expectation (needing a logprob-exposing
+    backend such as Vertex, vLLM, or SGLang). The repo's Anthropic Messages
+    client does not expose token logprobs, so the reward is a Monte Carlo
+    estimate of that expectation instead: the pair is scored ``n_evaluations``
+    times with stochastic sampling and the per-slot scores are averaged. This is
+    the parameter-free stand-in for the score-token expectation, and it is what
+    reduces scoring variance -- at temperature 0 repeated calls are
+    deterministic and average to themselves.
 
 Preserved from the paper:
-  * Score granularity -- a fine-grained 0-100 scale rather than a discrete pick.
-  * Repeated evaluation -- when ``num_samples > 1`` the candidate is re-scored
-    with stochastic sampling (a nonzero ``sample_temperature``) and the scores
-    are averaged, so the mean is a Monte Carlo estimate of the score
-    expectation. This is the parameter-free stand-in for the paper's expectation
-    over scoring-token logits, and it is what actually reduces scoring variance:
-    at ``temperature == 0`` repeated calls are deterministic and average to
-    themselves, giving no variance reduction.
-  * Criteria decomposition -- scoring each candidate on multiple criteria and
-    aggregating reduces task complexity.
-  * Cost-efficient ranking -- each candidate is scored independently (no
-    all-pairs comparisons) and ranked by aggregate score, so cost scales
-    linearly in the number of candidates. ``rank_candidates`` exposes the full
-    continuous ranking; ``select`` returns its argmax.
+  * Pairwise reward -- candidates are scored two-at-a-time in a directed A/B
+    comparison, not independently.
+  * Criteria decomposition -- each criterion is scored in its OWN isolated
+    verifier call and the rewards are averaged, reducing per-call complexity.
+  * Repeated evaluation -- ``n_evaluations`` stochastic samples per
+    (criterion, directed pair), averaged (the Monte Carlo expectation above).
+  * Probabilistic Pivot Tournament -- ring pass + pivots + Bradley-Terry
+    aggregation, so cost is O(Nk) rather than O(N^2).
 
 ``select`` exposes the same ``(instruction, candidates) -> selected index``
 contract as the existing majority-vote ensembler, so it drops in as an
 alternative selector.
 """
 
+import random
 import re
 from typing import Optional
 
 from prompts.verifier_prompt import DEFAULT_CRITERIA, build_verifier_prompt
+from utils import pivot_tournament as ppt
 from utils.llm_client import LLMClient, TextPrompt, get_client
 
-_SCORE_TAG_RE = re.compile(
-    r'<score\s+crit(?:erion|eria)="[^"]*"\s*>\s*(\d+(?:\.\d+)?)\s*</score>',
-    re.IGNORECASE,
-)
+MAX_TOKENS = 4096
+DEFAULT_N_EVALUATIONS = 8
+DEFAULT_SAMPLE_TEMPERATURE = 0.7
 
 
-def _extract_scores(response_text: str) -> list[float]:
-    """Pull all numeric scores out of ``<score ...>N</score>`` tags."""
-    return [float(m) for m in _SCORE_TAG_RE.findall(response_text)]
+def _extract_score(response_text: str, slot: str, max_score: int) -> Optional[float]:
+    """Pull the numeric score for one slot out of ``<score_X>N</score_X>``.
 
-
-def score_candidate(
-    instruction: str,
-    candidate: str,
-    client: LLMClient,
-    num_samples: int = 1,
-    criteria: tuple[str, ...] = DEFAULT_CRITERIA,
-    max_score: int = 100,
-    max_tokens: int = 4096,
-    temperature: float = 0.0,
-    sample_temperature: float = 0.7,
-) -> float:
-    """Score a single candidate on a continuous 0-``max_score`` scale.
-
-    The candidate is scored ``num_samples`` times (repeated evaluation) and on
-    each criterion in ``criteria`` (criteria decomposition); the returned
-    continuous score is the mean across samples and criteria. Returns 0.0 if
-    the model emits no parseable score tags.
-
-    A single sample uses ``temperature`` (deterministic by default). Repeated
-    evaluation (``num_samples > 1``) instead samples at ``sample_temperature``
-    so the per-sample scores vary and their mean estimates the score
-    expectation -- averaging identical deterministic samples would reduce no
-    variance.
+    Returns the score normalized to ``[0, 1]``, or ``None`` if the tag is
+    absent so the caller can fall back to a tie.
     """
-    prompt = build_verifier_prompt(instruction, candidate, criteria, max_score)
+    match = re.search(
+        rf"<score_{slot}>\s*(\d+(?:\.\d+)?)\s*</score_{slot}>",
+        response_text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    value = min(max(float(match.group(1)), 0.0), float(max_score))
+    return value / max_score
+
+
+def score_pair_criterion(
+    problem: str,
+    trace_a: str,
+    trace_b: str,
+    criterion: dict,
+    client: LLMClient,
+    n_evaluations: int = DEFAULT_N_EVALUATIONS,
+    max_score: int = 100,
+    sample_temperature: float = DEFAULT_SAMPLE_TEMPERATURE,
+) -> tuple[float, float]:
+    """Fine-grained rewards ``(R_a, R_b)`` in ``[0, 1]`` for one directed pair
+    on a SINGLE criterion.
+
+    The verifier sees ``trace_a`` in slot A and ``trace_b`` in slot B and scores
+    both on ``criterion`` only (criteria decomposition). The pair is scored
+    ``n_evaluations`` times and the per-slot scores are averaged -- the Monte
+    Carlo estimate of the paper's score-token expectation. A slot with no
+    parseable score defaults to a tie (0.5). Repeated evaluation
+    (``n_evaluations > 1``) samples at ``sample_temperature`` so the per-sample
+    scores vary; a single evaluation is deterministic (temperature 0.0).
+    """
+    prompt = build_verifier_prompt(problem, trace_a, trace_b, criterion, max_score)
     messages = [[TextPrompt(text=prompt)]]
 
-    effective_temperature = sample_temperature if num_samples > 1 else temperature
+    effective_temperature = sample_temperature if n_evaluations > 1 else 0.0
 
-    sample_means: list[float] = []
-    for _ in range(max(1, num_samples)):
+    a_samples: list[float] = []
+    b_samples: list[float] = []
+    for _ in range(max(1, n_evaluations)):
         response, _metadata = client.generate(
             messages=messages,  # type: ignore
-            max_tokens=max_tokens,
+            max_tokens=MAX_TOKENS,
             temperature=effective_temperature,
         )
         first = response[0]
         text = first.text if hasattr(first, "text") else str(first)  # pyright: ignore[reportAttributeAccessIssue]
-        scores = [min(max(s, 0.0), float(max_score)) for s in _extract_scores(text)]
-        if scores:
-            sample_means.append(sum(scores) / len(scores))
+        ra = _extract_score(text, "A", max_score)
+        rb = _extract_score(text, "B", max_score)
+        if ra is not None:
+            a_samples.append(ra)
+        if rb is not None:
+            b_samples.append(rb)
 
-    if not sample_means:
-        return 0.0
-    return sum(sample_means) / len(sample_means)
+    r_a = sum(a_samples) / len(a_samples) if a_samples else 0.5
+    r_b = sum(b_samples) / len(b_samples) if b_samples else 0.5
+    return r_a, r_b
 
 
-def score_candidates(
-    instruction: str,
-    candidates: list[str],
+def directed_reward(
+    problem: str,
+    trace_a: str,
+    trace_b: str,
     client: LLMClient,
-    num_samples: int = 1,
-    criteria: tuple[str, ...] = DEFAULT_CRITERIA,
+    criteria: tuple[dict, ...] = DEFAULT_CRITERIA,
+    n_evaluations: int = DEFAULT_N_EVALUATIONS,
     max_score: int = 100,
-    sample_temperature: float = 0.7,
-) -> list[float]:
-    """Score every candidate independently, preserving input order.
+    sample_temperature: float = DEFAULT_SAMPLE_TEMPERATURE,
+) -> tuple[float, float]:
+    """Fine-grained rewards ``(R_a, R_b)`` for the directed comparison (``a`` in
+    slot A, ``b`` in slot B), averaged over all criteria.
 
-    Independent per-candidate scoring is the paper's cost-efficient ranking
-    primitive: no pairwise comparisons, so cost scales linearly in the number
-    of candidates rather than quadratically.
+    Each criterion is scored in its own isolated verifier call
+    (:func:`score_pair_criterion`); the returned reward averages those
+    per-criterion rewards. Returns a tie (0.5, 0.5) if there are no criteria.
     """
-    return [
-        score_candidate(
-            instruction,
-            candidate,
+    sa = sb = 0.0
+    cnt = 0
+    for criterion in criteria:
+        ra, rb = score_pair_criterion(
+            problem,
+            trace_a,
+            trace_b,
+            criterion,
             client,
-            num_samples,
-            criteria,
+            n_evaluations,
             max_score,
-            sample_temperature=sample_temperature,
+            sample_temperature,
         )
-        for candidate in candidates
-    ]
-
-
-def rank_candidates(
-    instruction: str,
-    candidates: list[str],
-    client: LLMClient,
-    num_samples: int = 1,
-    criteria: tuple[str, ...] = DEFAULT_CRITERIA,
-    max_score: int = 100,
-    sample_temperature: float = 0.7,
-) -> list[tuple[int, float]]:
-    """Rank candidates by continuous verification score, best first.
-
-    Returns ``(original_index, score)`` pairs sorted by descending score; ties
-    preserve input order (stable sort). Exposing the full continuous ranking --
-    not just the winner -- is what the paper's fine-grained score is for: it can
-    drive candidate selection, serve as a task-progress proxy, or feed a reward
-    signal, all of which a single discrete pick discards.
-    """
-    scores = score_candidates(
-        instruction,
-        candidates,
-        client,
-        num_samples,
-        criteria,
-        max_score,
-        sample_temperature=sample_temperature,
-    )
-    indexed = list(enumerate(scores))
-    indexed.sort(key=lambda pair: pair[1], reverse=True)
-    return indexed
+        sa += ra
+        sb += rb
+        cnt += 1
+    return (sa / cnt, sb / cnt) if cnt else (0.5, 0.5)
 
 
 def select(
     instruction: str,
     candidates: list[str],
     client: Optional[LLMClient] = None,
-    num_samples: int = 1,
-    criteria: tuple[str, ...] = DEFAULT_CRITERIA,
+    criteria: tuple[dict, ...] = DEFAULT_CRITERIA,
+    n_evaluations: int = DEFAULT_N_EVALUATIONS,
+    pivots: int = ppt.DEFAULT_PIVOTS,
+    seed: int = 0,
     max_score: int = 100,
-    sample_temperature: float = 0.7,
+    sample_temperature: float = DEFAULT_SAMPLE_TEMPERATURE,
 ) -> Optional[int]:
-    """Select the best candidate by continuous verification score.
+    """Select the best of N candidates with a Probabilistic Pivot Tournament.
 
-    Returns the 0-based index of the highest-scoring candidate, or ``None`` if
-    there are no candidates. Ties are broken toward the earliest candidate.
+    Directed pairs of candidates are scored with the pairwise fine-grained
+    reward and aggregated by PPT (ring pass + pivots + Bradley-Terry soft wins
+    normalized by comparison count), so the cost is O(Nk) verifier comparisons
+    rather than the O(N^2) of a full round-robin. Returns the 0-based index of
+    the winning candidate, or ``None`` if there are no candidates. Identical
+    inputs with the same ``seed`` run the identical tournament.
 
     ``client`` defaults to the repo's Anthropic direct client (Claude Sonnet 4
     by default), matching the ensembler's model convention.
     """
     if not candidates:
         return None
+    n = len(candidates)
+    if n == 1:
+        return 0
     if client is None:
         client = get_client("anthropic-direct")
 
-    ranking = rank_candidates(
-        instruction,
-        candidates,
-        client,
-        num_samples,
-        criteria,
-        max_score,
-        sample_temperature=sample_temperature,
-    )
-    return ranking[0][0]
+    # Memoize directed comparisons so a pair scored in the ring pass is not
+    # re-scored if it recurs in the pivot rounds (the reference achieves this
+    # with an on-disk score cache).
+    memo: dict[tuple[int, int], tuple[float, float]] = {}
+
+    def score(a: int, b: int) -> tuple[float, float]:
+        if (a, b) not in memo:
+            memo[(a, b)] = directed_reward(
+                instruction,
+                candidates[a],
+                candidates[b],
+                client,
+                criteria,
+                n_evaluations,
+                max_score,
+                sample_temperature,
+            )
+        return memo[(a, b)]
+
+    rng = random.Random(seed)
+    ring = ppt.ring_cycle(n, rng)
+    best, _n_comparisons = ppt.select_best(n, ring, pivots, score)
+    return best

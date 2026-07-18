@@ -209,25 +209,31 @@ The output JSON file will contain an array of result objects, each with the foll
 
 #### LLM-as-a-Verifier selection (`--verifier`)
 
-Pass `--verifier` to rank candidates with the LLM-as-a-Verifier scorer (Claude
-Sonnet 4) instead of the single-shot o1 majority vote. Each candidate is scored
-independently on a fine-grained 0-100 scale across multiple criteria
-(correctness, completeness, minimality), and the highest-scoring candidate is
-selected. This continuous, criterion-decomposed scoring is adapted from
-*LLM-as-a-Verifier* (arXiv:2607.05391); see `utils/solution_verifier.py`.
+Pass `--verifier` to select candidates with the LLM-as-a-Verifier reward model
+(Claude Sonnet 4) instead of the single-shot o1 majority vote. Candidates are
+compared *pairwise*: the verifier sees two candidates (A and B) together and
+emits a fine-grained 0-100 score for each, on one criterion at a time
+(correctness, completeness, minimality — each scored in its own isolated call).
+Those directed comparisons are aggregated by a Probabilistic Pivot Tournament
+(ring pass + pivots + Bradley-Terry soft wins), so the best of N candidates is
+found in O(Nk) verifier calls rather than O(N²). This mechanism is ported from
+*LLM-as-a-Verifier* (arXiv:2607.05391); see `utils/solution_verifier.py` and
+`utils/pivot_tournament.py`.
 
 ```bash
 python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier
 ```
 
-Add `--verifier-samples N` to enable the paper's *repeated evaluation* axis:
-each candidate is scored `N` times with sampling and the scores are averaged, so
-the mean is a Monte Carlo estimate of the score expectation (the parameter-free
-stand-in for the paper's expectation over scoring-token logits) and scoring
-variance is reduced. `N=1` (the default) keeps scoring deterministic.
+The paper reads the verifier's logprob distribution over score tokens and takes
+its expectation, which needs a logprob-exposing backend (Vertex / vLLM /
+SGLang). The repo's Anthropic client exposes no logprobs, so each pairwise score
+is a Monte Carlo estimate of that expectation instead: `--verifier-samples N`
+scores each directed pair `N` times with sampling and averages, reducing scoring
+variance. The default is `N=8`, matching the paper's repeated-evaluation count;
+`N=1` keeps scoring deterministic.
 
 ```bash
-python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier --verifier-samples 5
+python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier --verifier-samples 16
 ```
 
 This makes it straightforward to A/B test the two selection strategies on the

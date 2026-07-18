@@ -58,10 +58,10 @@ def parse_args():
     parser.add_argument(
         "--verifier-samples",
         type=int,
-        default=1,
-        help="Repeated-evaluation count for --verifier: score each candidate this "
-        "many times (with sampling) and average to reduce scoring variance "
-        "(default: 1)",
+        default=8,
+        help="Repeated-evaluation count (n_evaluations) for --verifier: score "
+        "each directed pair this many times (with sampling) and average to "
+        "reduce scoring variance (default: 8, matching the paper)",
     )
     return parser.parse_args()
 
@@ -132,7 +132,7 @@ def process_problem(
             "selected_diff": None,
         }
 
-    # Verifier path: rank by continuous scores instead of a discrete pick.
+    # Verifier path: pick via a pairwise pivot tournament instead of a discrete o1 pick.
     if selector is not None:
         solution_index = selector(instruction, diffs)
         if solution_index is not None and not 0 <= solution_index < len(diffs):
@@ -277,7 +277,7 @@ def main():
             instruction: str, candidates: List[str]
         ) -> Optional[int]:
             return verifier_select(
-                instruction, candidates, num_samples=args.verifier_samples
+                instruction, candidates, n_evaluations=args.verifier_samples
             )
 
         selector = _verifier_selector
