@@ -13,14 +13,21 @@ observed_landing_zones:
   last_observed: '2026-07-18T00:37:56Z'
 - path: tools/
   shape_tags:
-  - unclassified
+  - registry-add
   confirmed_by:
   - arxiv: 2607.13034v1
     mode: ''
     call_site_specifics: ''
     branch: do-ai-agents-know-when-a-task-is-simple-toward-complexity-aw
     timestamp: '2026-07-18T20:24:08Z'
-  last_observed: '2026-07-18T20:24:08Z'
+  - arxiv: 2505.19436v1
+    mode: Mode 2 (adapted port)
+    call_site_specifics: 'Agent.__init__ in tools/agent.py (self.tools registry, line
+      110); the Agent is itself reached from the existing entry points cli.py:129
+      (agent.run_agent) and run_agent_on_swebench_problem.py, and the '
+    branch: task-memory-engine-spatial-memory-for-robust-multi-step-llm-
+    timestamp: '2026-07-19T13:01:08Z'
+  last_observed: '2026-07-19T13:01:08Z'
 rejected_shapes: []
 coordination_signals: []
-last_updated: '2026-07-18T20:24:08Z'
+last_updated: '2026-07-19T13:01:08Z'
