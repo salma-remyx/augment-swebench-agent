@@ -12,6 +12,7 @@ from tools.complete_tool import CompleteTool
 from prompts.system_prompt import SYSTEM_PROMPT
 from tools.str_replace_tool import StrReplaceEditorTool
 from tools.sequential_thinking_tool import SequentialThinkingTool
+from tools.task_memory_tool import TaskMemoryTool
 from termcolor import colored
 from rich.console import Console
 import logging
@@ -106,6 +107,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
             bash_tool,
             StrReplaceEditorTool(workspace_manager=workspace_manager),
             SequentialThinkingTool(),
+            TaskMemoryTool(),
             self.complete_tool,
         ]
 

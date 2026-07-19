@@ -13,6 +13,7 @@ Since Anthropic's models are currently state-of-the-art on code, we used Claude 
   - Bash command execution
   - File viewing and editing
   - Sequential thinking for complex problem-solving
+- Task memory tool — persistent, revision-aware tracking of goals, subtask dependencies, findings, and decisions that survives dialog truncation (adapted from "Task Memory Engine: Spatial Memory for Robust Multi-Step LLM Agents", arXiv:2505.19436)
 - Prompt template + system prompt from our SWE-bench submission.
 - Integration with Anthropic's Claude for core agent and OpenAI models for ensembling
 - Command approval management for safe execution
