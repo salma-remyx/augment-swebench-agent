@@ -15,11 +15,16 @@ import json
 import os
 import re
 import sys
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from tqdm import tqdm
 
 from prompts.ensembler_prompt import build_ensembler_prompt
 from utils.llm_client import get_client, TextPrompt
+from utils.solution_verifier import select as verifier_select
+
+# Optional selector with the (instruction, candidates) -> index contract
+# of utils.solution_verifier; replaces the single-shot o1 pick.
+Selector = Callable[[str, List[str]], Optional[int]]
 
 MAX_TOKENS = 16384
 TEMPERATURE = 0.0
@@ -43,6 +48,20 @@ def parse_args():
         type=int,
         default=8,
         help="Number of worker threads for parallel processing (default: 4)",
+    )
+    parser.add_argument(
+        "--verifier",
+        action="store_true",
+        help="Rank candidates with the LLM-as-a-Verifier scorer (Claude Sonnet 4) "
+        "instead of the single-shot o1 majority vote",
+    )
+    parser.add_argument(
+        "--verifier-samples",
+        type=int,
+        default=8,
+        help="Repeated-evaluation count (n_evaluations) for --verifier: score "
+        "each directed pair this many times (with sampling) and average to "
+        "reduce scoring variance (default: 8, matching the paper)",
     )
     return parser.parse_args()
 
@@ -69,8 +88,20 @@ def extract_solution_index(response_text: str) -> Optional[int]:
     return None
 
 
+def _eval_success(eval_outcomes: Any, solution_index: Optional[int]) -> bool:
+    """Safely look up whether the selected candidate passed its eval."""
+    if solution_index is None or not isinstance(eval_outcomes, list):
+        return False
+    if not 0 <= solution_index < len(eval_outcomes):
+        return False
+    return bool(eval_outcomes[solution_index].get("is_success", False))
+
+
 def process_problem(
-    problem: Dict[str, Any], problem_index: int, total_problems: int
+    problem: Dict[str, Any],
+    problem_index: int,
+    total_problems: int,
+    selector: Optional[Selector] = None,
 ) -> Dict[str, Any]:
     """Process a single problem using the LLM.
 
@@ -78,13 +109,11 @@ def process_problem(
         problem: The problem to process
         problem_index: The index of the problem (for logging)
         total_problems: The total number of problems (for logging)
+        selector: Optional verifier selector (see utils.solution_verifier).
 
     Returns:
         A dictionary containing the result for the problem
     """
-    # Create a client for this thread
-    client = get_client("openai-direct", model_name="o1-2024-12-17", cot_model=True)
-
     print(
         f"Processing problem {problem_index + 1}/{total_problems}: {problem.get('id', f'Problem {problem_index + 1}')}"
     )
@@ -102,6 +131,30 @@ def process_problem(
             "selected_diff_index": None,
             "selected_diff": None,
         }
+
+    # Verifier path: pick via a pairwise pivot tournament instead of a discrete o1 pick.
+    if selector is not None:
+        solution_index = selector(instruction, diffs)
+        if solution_index is not None and not 0 <= solution_index < len(diffs):
+            print(
+                f"  Warning: verifier returned invalid index {solution_index} "
+                f"for problem {problem_index + 1}"
+            )
+            solution_index = None
+        selected_diff = diffs[solution_index] if solution_index is not None else None
+        return {
+            "id": problem.get("id", f"Problem {problem_index + 1}"),
+            "instruction": instruction,
+            "response": "",
+            "selected_diff_index": solution_index,
+            "selected_diff": selected_diff,
+            "is_eval_success": _eval_success(eval_outcomes, solution_index),
+        }
+
+    # Majority-vote path: create the o1 client lazily so the verifier path
+    # (which uses an Anthropic client via the selector) does not require an
+    # OpenAI API key.
+    client = get_client("openai-direct", model_name="o1-2024-12-17", cot_model=True)
 
     # Build the ensembler prompt
     prompt = build_ensembler_prompt(instruction, diffs)
@@ -158,13 +211,16 @@ def process_problem(
 
 
 def ensemble_problems(
-    problems: List[Dict[str, Any]], num_workers: int = 8
+    problems: List[Dict[str, Any]],
+    num_workers: int = 8,
+    selector: Optional[Selector] = None,
 ) -> List[Dict[str, Any]]:
     """Ensemble problems using a thread pool for parallel processing.
 
     Args:
         problems: List of problems to process
         num_workers: Number of worker threads to use
+        selector: Optional verifier selector forwarded to ``process_problem``
 
     Returns:
         List of results for each problem
@@ -189,7 +245,9 @@ def ensemble_problems(
         # This preserves the order of the results
         results = list(
             tqdm(
-                executor.map(lambda x: process_problem(*x), problem_data),
+                executor.map(
+                    lambda x: process_problem(*x, selector=selector), problem_data
+                ),
                 total=len(problems),
                 desc="Processing problems",
             )
@@ -202,9 +260,27 @@ def main():
     """Main function."""
     args = parse_args()
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    # --verifier selects candidates via LLM-as-a-Verifier scoring (Claude
+    # Sonnet 4); otherwise fall back to the single-shot o1 majority vote.
+    if args.verifier:
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            print("Error: ANTHROPIC_API_KEY environment variable is not set")
+            sys.exit(1)
+    elif not os.environ.get("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY environment variable is not set")
         sys.exit(1)
+
+    selector: Optional[Selector] = None
+    if args.verifier:
+
+        def _verifier_selector(
+            instruction: str, candidates: List[str]
+        ) -> Optional[int]:
+            return verifier_select(
+                instruction, candidates, n_evaluations=args.verifier_samples
+            )
+
+        selector = _verifier_selector
 
     # Load problems from JSON file
     problems = load_problems(args.input_jsonl_path)
@@ -213,7 +289,7 @@ def main():
     output_path = args.output_path or "ensembler_results.json"
 
     # Ensemble problems using thread pool
-    results = ensemble_problems(problems, num_workers=args.workers)
+    results = ensemble_problems(problems, num_workers=args.workers, selector=selector)
 
     # get success rate
     success_rate = sum([result["is_eval_success"] for result in results]) / len(results)
