@@ -10,7 +10,12 @@ observed_landing_zones:
     call_site_specifics: ''
     branch: llm-as-a-verifier-a-general-purpose-verification-framework
     timestamp: '2026-07-18T00:37:56Z'
-  last_observed: '2026-07-18T00:37:56Z'
+  - arxiv: 2607.11388v1
+    mode: ''
+    call_site_specifics: ''
+    branch: structagent-harness-long-horizon-digital-agents-with-unified
+    timestamp: '2026-07-20T07:40:59Z'
+  last_observed: '2026-07-20T07:40:59Z'
 - path: tools/
   shape_tags:
   - registry-add
@@ -30,4 +35,4 @@ observed_landing_zones:
   last_observed: '2026-07-19T13:01:08Z'
 rejected_shapes: []
 coordination_signals: []
-last_updated: '2026-07-19T13:01:08Z'
+last_updated: '2026-07-20T07:40:59Z'
