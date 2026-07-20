@@ -7,6 +7,7 @@ from utils.common import (
     ToolImplOutput,
 )
 from utils.llm_client import LLMClient, TextResult
+from utils.task_state import TaskState
 from utils.workspace_manager import WorkspaceManager
 from tools.complete_tool import CompleteTool
 from prompts.system_prompt import SYSTEM_PROMPT
@@ -58,6 +59,11 @@ try breaking down the task into smaller steps and call this tool multiple times.
         use_prompt_budgeting: bool = True,
         ask_user_permission: bool = False,
         docker_container_id: Optional[str] = None,
+        enable_task_state: bool = True,
+        surface_task_state: bool = True,
+        enable_state_verification: bool = False,
+        state_checkpoint_every: int = 5,
+        state_verify_threshold: float = 0.55,
     ):
         """Initialize the agent.
 
@@ -109,6 +115,21 @@ try breaking down the task into smaller steps and call this tool multiple times.
             self.complete_tool,
         ]
 
+        # StructAgent-style unified task-progress state (arXiv:2607.11388).
+        # The state tracker distills the tool-call stream into compact,
+        # verifiable progress; verification (pairwise reward via
+        # utils.solution_verifier) is opt-in to avoid per-turn LLM cost.
+        self.surface_task_state = surface_task_state
+        self.enable_state_verification = enable_state_verification
+        self.task_state = (
+            TaskState(
+                checkpoint_every=state_checkpoint_every,
+                verify_threshold=state_verify_threshold,
+            )
+            if enable_task_state
+            else None
+        )
+
     def run_impl(
         self,
         tool_input: dict[str, Any],
@@ -124,6 +145,10 @@ try breaking down the task into smaller steps and call this tool multiple times.
         # Add instruction to dialog before getting mode
         self.dialog.add_user_prompt(instruction)
         self.interrupted = False
+
+        # Anchor the unified task-progress state to this run's goal.
+        if self.task_state is not None:
+            self.task_state.begin(instruction)
 
         remaining_turns = self.max_turns
         while remaining_turns > 0:
@@ -206,7 +231,31 @@ try breaking down the task into smaller steps and call this tool multiple times.
                     else:
                         tool_result = result
 
-                    self.dialog.add_tool_call_result(tool_call, tool_result)
+                    # Update the unified task-progress state from this evidence
+                    # and, at verification checkpoints, gate the transition with
+                    # the pairwise verifier reward. When surfacing is on, append
+                    # a compact state snapshot so the agent reasons over
+                    # structured progress rather than the raw transcript.
+                    surfaced_result = tool_result
+                    if self.task_state is not None:
+                        self.task_state.observe(
+                            tool_call.tool_name, tool_call.tool_input, tool_result
+                        )
+                        if (
+                            self.enable_state_verification
+                            and self.task_state.checkpoint_due()
+                        ):
+                            verdict = self.task_state.verify_progress(self.client)
+                            self.logger_for_agent_logs.info(
+                                f"[StructAgent] {verdict.note} "
+                                f"accepted={verdict.accepted}"
+                            )
+                        if self.surface_task_state:
+                            surfaced_result = (
+                                f"{tool_result}\n\n{self.task_state.to_compact_str()}"
+                            )
+
+                    self.dialog.add_tool_call_result(tool_call, surfaced_result)
 
                     if self.complete_tool.should_stop:
                         # Add a fake model response, so the next turn is the user's

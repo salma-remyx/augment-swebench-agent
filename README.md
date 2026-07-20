@@ -273,3 +273,29 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Structured task-progress state (`TaskState`)
+
+The agent normally operates over its raw tool-call history. By default `Agent`
+additionally maintains a *unified, compact, verifiable* state of task progress
+and reasons over it (disable with `enable_task_state=False`). Each tool result
+is distilled into a bounded evidence ledger, failures are attributed by source
+(command error, test failure, traceback, ...), and a compact state snapshot is
+appended to the tool result so the model sees structured progress each turn
+instead of re-reading a growing transcript (disable the snapshot with
+`surface_task_state=False`).
+
+Progress transitions can additionally be gated by verification: at a
+configurable checkpoint cadence, the current state is scored against the last
+*accepted* state for the goal using the pairwise verifier reward from
+`utils/solution_verifier.py` (LLM-as-a-Verifier). A transition is accepted only
+when the verifier confirms grounded progress; an unaccepted transition is
+recorded as a failure attribution so the agent can recover rather than silently
+stall. Verification is off by default to avoid per-turn LLM cost.
+
+This is an adapted (Mode 2) port of *StructAgent: Harness Long-horizon Digital
+Agents with Unified Causal Structure* (arXiv:2607.11388); see
+`utils/task_state.py`. The paper's GUI actor over OSWorld/Minecraft is
+replaced by evidence from this agent's own bash/edit/test tools, and its
+bespoke state-transition verifier reuses the team's LLM-as-a-Verifier reward.
+
