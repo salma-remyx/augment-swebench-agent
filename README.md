@@ -239,6 +239,38 @@ python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path res
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
 
+#### Adaptive best-of-N budget (`adaptive_best_of_n_ensembler.py`)
+
+`adaptive_best_of_n_ensembler.py` is a third selection strategy that, instead of
+only picking among a fixed set of N candidates, asks how many of those N were
+actually needed. Adapted from *Best-of-∞ -- Asymptotic Performance of Test-Time
+Compute* (arXiv:2509.21091): the paper shows best-of-N selection by majority
+voting converges as N grows, so an *adaptive* budget that stops sampling once
+the candidate answers agree spends inference compute far more efficiently than
+a fixed N on every problem. This tool reads the same candidate-diff +
+`eval_outcomes` JSONL as the ensembler above and, per problem, reports the
+smallest number of rollouts at which the answers agreed (`adaptive_n`) and how
+many of the generated rollouts that saved. No LLM calls -- selection is a
+parameter-free majority vote on normalized patch content; see
+`utils/adaptive_best_of_n.py`.
+
+```bash
+python adaptive_best_of_n_ensembler.py example_ensembler_data.jsonl --output_path adaptive_results.json
+```
+
+The paper's "answer" is a single value that N samples vote on; here the answer
+is a candidate patch, so agreement is measured over *normalized patch content*
+(diff hunk headers and line numbers stripped). When `eval_outcomes` are
+present, agreement is measured over the *successful* rollouts first -- the
+repo's eval signal stands in for the paper's correctness oracle -- falling
+back to all rollouts when none succeed. `--agreement-threshold` (default `0.5`,
+a strict majority) and `--min-samples` (default `2`, since agreement is
+undefined for a single sample) tune the stopping rule. The output file mirrors
+the ensembler result shape and adds the adaptive budget fields, so all three
+strategies stay comparable. The agreement-based selector is also available as
+a drop-in `Selector` (`utils.adaptive_best_of_n.select`) with the same
+`(instruction, candidates) -> index` contract as the o1 vote and `--verifier`.
+
 ## Development
 
 ### Running Tests
