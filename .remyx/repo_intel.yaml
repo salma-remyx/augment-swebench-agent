@@ -15,7 +15,12 @@ observed_landing_zones:
     call_site_specifics: ''
     branch: structagent-harness-long-horizon-digital-agents-with-unified
     timestamp: '2026-07-20T07:40:59Z'
-  last_observed: '2026-07-20T07:40:59Z'
+  - arxiv: 2509.21091v1
+    mode: ''
+    call_site_specifics: ''
+    branch: best-of--infty----asymptotic-performance-of-test-time-comput
+    timestamp: '2026-07-21T21:41:53Z'
+  last_observed: '2026-07-21T21:41:53Z'
 - path: tools/
   shape_tags:
   - registry-add
@@ -35,4 +40,4 @@ observed_landing_zones:
   last_observed: '2026-07-19T13:01:08Z'
 rejected_shapes: []
 coordination_signals: []
-last_updated: '2026-07-20T07:40:59Z'
+last_updated: '2026-07-21T21:41:53Z'
