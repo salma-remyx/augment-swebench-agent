@@ -1,3 +1,4 @@
+import re
 from unittest.mock import MagicMock, patch
 from tools.str_replace_tool import StrReplaceEditorTool
 
@@ -723,3 +724,85 @@ def test_str_replace_empty_old_str(tmp_path):
     )
     assert result.success
     assert test_file.read_text() == ""
+
+
+def test_str_replace_no_match_emits_line_anchored_feedback(tmp_path):
+    # The failure path used to echo old_str holistically; it now also anchors
+    # the closest file region with line numbers + an inline marker.
+    workspace_manager = build_ws_manager(tmp_path)
+    test_file = tmp_path / "test.py"
+    test_file.write_text("def foo():\n    return 1\n\ndef bar():\n    return 2\n")
+
+    tool = StrReplaceEditorTool(
+        workspace_manager=workspace_manager,
+        ignore_indentation_for_str_replace=False,
+    )
+
+    result = tool.run_impl(
+        {
+            "command": "str_replace",
+            "path": str(test_file),
+            "old_str": "def foo():\n    return 42",  # close to lines 1-2, not exact
+            "new_str": "def foo():\n    return 42",
+        }
+    )
+
+    assert not result.success
+    # Holistic prefix is preserved (existing contract).
+    assert "did not appear" in result.tool_output
+    # Line-anchored block is present: a cat -n line (spaces + digits + tab) ...
+    assert re.search(r"\n\s*\d+\t", result.tool_output)
+    # ... plus an inline marker comment anchored to a line.
+    assert "closest match" in result.tool_output
+
+
+def test_str_replace_multiple_occurrences_emits_line_anchored_feedback(tmp_path):
+    workspace_manager = build_ws_manager(tmp_path)
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("line1\ntarget\nline3\ntarget\nline5")
+
+    tool = StrReplaceEditorTool(
+        workspace_manager=workspace_manager,
+        ignore_indentation_for_str_replace=False,
+    )
+
+    result = tool.run_impl(
+        {
+            "command": "str_replace",
+            "path": str(test_file),
+            "old_str": "target",
+            "new_str": "replaced",
+        }
+    )
+
+    assert not result.success
+    # Existing contract preserved.
+    assert "Multiple occurrences" in result.tool_output
+    # Duplicate occurrences are now rendered with cat -n line numbers + markers.
+    assert re.search(r"\n\s*\d+\t", result.tool_output)
+    assert "duplicate occurrence" in result.tool_output
+
+
+def test_str_replace_no_match_unrelated_old_str_keeps_contract(tmp_path):
+    # When nothing resembles old_str, no line-anchored block is added and the
+    # plain holistic message still satisfies the existing contract.
+    workspace_manager = build_ws_manager(tmp_path)
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("alpha\nbeta\ngamma\n")
+
+    tool = StrReplaceEditorTool(
+        workspace_manager=workspace_manager,
+        ignore_indentation_for_str_replace=False,
+    )
+
+    result = tool.run_impl(
+        {
+            "command": "str_replace",
+            "path": str(test_file),
+            "old_str": "zzzzzz_unrelated_token_qqqqqq",
+            "new_str": "replaced",
+        }
+    )
+
+    assert not result.success
+    assert "did not appear" in result.tool_output
