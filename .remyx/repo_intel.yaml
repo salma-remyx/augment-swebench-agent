@@ -37,7 +37,12 @@ observed_landing_zones:
       (agent.run_agent) and run_agent_on_swebench_problem.py, and the '
     branch: task-memory-engine-spatial-memory-for-robust-multi-step-llm-
     timestamp: '2026-07-19T13:01:08Z'
-  last_observed: '2026-07-19T13:01:08Z'
+  - arxiv: 2607.12713v1
+    mode: ''
+    call_site_specifics: ''
+    branch: line-anchored-feedback-cuts-token-costs-and-improves-correct
+    timestamp: '2026-07-22T18:04:29Z'
+  last_observed: '2026-07-22T18:04:29Z'
 rejected_shapes: []
 coordination_signals: []
-last_updated: '2026-07-21T21:41:53Z'
+last_updated: '2026-07-22T18:04:29Z'
