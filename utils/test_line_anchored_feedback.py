@@ -66,3 +66,14 @@ def test_build_duplicate_feedback_anchors_each_occurrence():
 
 def test_build_duplicate_feedback_empty_when_no_lines():
     assert build_duplicate_feedback("a\nb\n", []) == ""
+
+
+def test_build_duplicate_feedback_caps_rendered_occurrences():
+    # 8 occurrences: only the first 5 are rendered with context; the rest
+    # are summarized so feedback stays bounded (the paper's token-cost lever).
+    file_content = "\n".join(f"line{i}" if i % 3 else "target" for i in range(24))
+    line_numbers = [i + 1 for i, line in enumerate(file_content.split("\n")) if line == "target"]
+    assert len(line_numbers) == 8
+    feedback = build_duplicate_feedback(file_content, line_numbers)
+    assert feedback.count("duplicate occurrence") == 5
+    assert "3 more occurrence(s) at lines [16, 19, 22]" in feedback

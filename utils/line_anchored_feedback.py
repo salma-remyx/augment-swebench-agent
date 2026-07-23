@@ -37,6 +37,14 @@ slightly-off copy of real file lines) score ~0.8+, while unrelated short
 lines score <0.25; 0.3 sits in that gap.
 """
 
+MAX_RENDERED_OCCURRENCES: int = 5
+"""Cap on duplicate occurrences rendered with full context.
+
+Feedback tokens are the cost the paper optimizes; a pathological ``old_str``
+(e.g. a single common token) can occur hundreds of times, so occurrences
+beyond this cap are summarized as a line-number list instead of rendered.
+"""
+
 
 def _line_similarity(a: str, b: str) -> float:
     """Rough per-line similarity in [0, 1] (parameter-free difflib proxy)."""
@@ -141,15 +149,18 @@ def build_duplicate_feedback(
     """Build line-anchored feedback for a non-unique (duplicate) ``old_str``.
 
     ``line_numbers`` are the 1-based lines where matches were found. Renders
-    each occurrence with surrounding context and an inline marker so the
-    model can disambiguate which occurrence to target. Returns "" when empty.
+    each occurrence (up to ``MAX_RENDERED_OCCURRENCES``) with surrounding
+    context and an inline marker so the model can disambiguate which
+    occurrence to target; further occurrences are summarized as a
+    line-number list to keep the feedback bounded. Returns "" when empty.
     """
     if not line_numbers:
         return ""
     file_lines = file_content.split("\n")
     n = len(file_lines)
+    unique_lines = sorted(set(line_numbers))
     out: list[str] = []
-    for i, ln in enumerate(sorted(set(line_numbers))):
+    for i, ln in enumerate(unique_lines[:MAX_RENDERED_OCCURRENCES]):
         if i > 0:
             out.append(f"{'':6}\t# ---")
         lo = max(0, ln - 1 - context_lines)
@@ -158,6 +169,12 @@ def build_duplicate_feedback(
             out.append(f"{idx + 1:6}\t{file_lines[idx]}")
             if idx == ln - 1:
                 out.append(f"{'':6}\t# <-- duplicate occurrence of old_str")
+    remaining = unique_lines[MAX_RENDERED_OCCURRENCES:]
+    if remaining:
+        out.append(
+            f"{'':6}\t# ... and {len(remaining)} more occurrence(s) "
+            f"at lines {remaining}"
+        )
     body = "\n".join(out)
     return (
         "Line-anchored feedback: the occurrences of `old_str` are anchored "
