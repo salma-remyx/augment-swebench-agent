@@ -273,3 +273,27 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Edit-tool line-anchored feedback
+
+When the `str_replace` command in the file-editing tool
+(`tools/str_replace_tool.py`) cannot apply an edit — because the supplied
+`old_str` was not found verbatim, or matched more than one location — the error
+fed back to the model used to be purely *holistic*: it echoed `old_str` with no
+reference to where in the file the problem actually was. The tool now also emits
+*line-anchored* feedback: it renders the relevant region of the file `cat -n`-style
+(with line numbers) plus an inline marker comment pointing at the closest match
+(no-match case) or each duplicate occurrence (multiple-match case), so the model
+can re-issue the edit against the exact lines.
+
+This is adapted from *Line-Anchored Feedback Cuts Token Costs and Improves
+Correctness in AI Code Editing* (arXiv:2607.12713), which shows line-anchored
+feedback cuts generated tokens and improves correctness for Claude models versus
+holistic delivery; see `utils/line_anchored_feedback.py`.
+
+The repo's edit tool already numbers its *success* output (`cat -n`); this change
+brings the same anchoring to its *failure* path — the genuine holistic-vs-line-anchored
+gap. The paper's FileMark alignment is a learned / interactive inline-comment export
+over a live editor; that auxiliary is substituted here with a parameter-free stdlib
+proxy (`difflib`) that locates the closest line window, preserving the core mechanism
+(anchoring feedback to the file's own line numbers) with target-native execution.
