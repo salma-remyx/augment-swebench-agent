@@ -273,3 +273,49 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Reflection Refiner (cross-candidate refinement)
+
+Where the Majority Vote Ensembler *selects* one of the N candidate diffs for a
+problem, the Reflection Refiner *reflects* across the whole candidate history
+(the N diffs plus their verified eval outcomes) and emits one **refined**
+candidate via final-round generation. It reads the same JSONL the ensembler
+reads (produced by `run_agent_on_swebench_problem.py`), so the two can be A/B
+tested on the same candidate set.
+
+The reflection + final-round-generation mechanism is adapted from *PhoenixRepair:
+Rethinking Repair Strategy Exploration in Software Agents* (arXiv:2607.18859);
+see `utils/solution_refiner.py` and `prompts/reflection_prompt.py`.
+
+#### How it works
+
+1. Candidates are partitioned by their **verified** eval outcome (test-suite
+   pass/fail) — a real I/O-contract signal, not keyword overlap.
+2. **Reflection**: the model reads the passing and failing candidates together
+   and distills what makes a correct fix (`<insights>` tag).
+3. **Final-round generation**: the model emits one refined unified diff guided
+   by those insights (`<refined_diff>` tag), anchored on the first verified
+   passing candidate when one exists.
+4. If generation yields no parseable patch, the refiner falls back to the first
+   verified-passing candidate, so the result is never worse than selection.
+
+#### Usage
+
+```bash
+python reflection_refiner.py example_ensembler_data.jsonl --output_path refiner_results.json --workers 8
+```
+
+Set `ANTHROPIC_API_KEY` first (the refiner drives Claude Sonnet 4, matching the
+agent). Each result records `source` (`generated` | `best_pass_fallback` |
+`no_pass_no_generation` | `no_candidate`) so a true final-round patch is
+distinguishable from a selection-equivalent fallback. The `refined_diff` is
+freshly generated and is not re-evaluated here; `best_anchor_eval_success`
+reports whether any *input* candidate was verified passing.
+
+#### What is adapted (Mode 2)
+
+The paper's multi-location/multi-strategy sampling maps onto the repo's existing
+best-of-N rollouts (not reimplemented), and its graph-based localization is cut
+in favor of the repo's verified `eval_outcomes`. The paper's multi-round
+iterative loop is collapsed to a single reflection → final-generation pass; each
+"historical attempt" maps to one of the N rollouts, and re-running iterates.
