@@ -20,7 +20,12 @@ observed_landing_zones:
     call_site_specifics: ''
     branch: best-of--infty----asymptotic-performance-of-test-time-comput
     timestamp: '2026-07-21T21:41:53Z'
-  last_observed: '2026-07-21T21:41:53Z'
+  - arxiv: 2607.18859v1
+    mode: ''
+    call_site_specifics: ''
+    branch: phoenixrepair-rethinking-repair-strategy-exploration-in-soft
+    timestamp: '2026-07-25T01:10:38Z'
+  last_observed: '2026-07-25T01:10:38Z'
 - path: tools/
   shape_tags:
   - registry-add
@@ -45,4 +50,4 @@ observed_landing_zones:
   last_observed: '2026-07-22T18:04:29Z'
 rejected_shapes: []
 coordination_signals: []
-last_updated: '2026-07-22T18:04:29Z'
+last_updated: '2026-07-25T01:10:38Z'
