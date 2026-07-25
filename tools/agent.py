@@ -6,6 +6,7 @@ from utils.common import (
     LLMTool,
     ToolImplOutput,
 )
+from utils.evidence_gate import evaluate_dialog
 from utils.llm_client import LLMClient, TextResult
 from utils.workspace_manager import WorkspaceManager
 from tools.complete_tool import CompleteTool
@@ -58,6 +59,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
         use_prompt_budgeting: bool = True,
         ask_user_permission: bool = False,
         docker_container_id: Optional[str] = None,
+        enforce_completion_gate: bool = False,
     ):
         """Initialize the agent.
 
@@ -66,6 +68,11 @@ try breaking down the task into smaller steps and call this tool multiple times.
             max_output_tokens_per_turn: Maximum tokens per turn
             max_turns: Maximum number of turns
             workspace_manager: Optional workspace manager for taking snapshots
+            enforce_completion_gate: When True, the ``complete`` tool requires
+                fresh, mechanically-verifiable test-pass evidence (Proof-or-Stop)
+                before honoring the DONE transition. Off by default so a human in
+                the loop is trusted; enable for autonomous runs where DONE must
+                mean "tests pass".
         """
         super().__init__()
         self.client = client
@@ -80,8 +87,12 @@ try breaking down the task into smaller steps and call this tool multiple times.
             use_prompt_budgeting=use_prompt_budgeting,
         )
 
-        # Create and store the complete tool
-        self.complete_tool = CompleteTool()
+        # Create and store the complete tool. When the evidence gate is
+        # enforced, DONE is gated on verifiable test evidence in the dialog.
+        if enforce_completion_gate:
+            self.complete_tool = CompleteTool(evidence_gate=evaluate_dialog)
+        else:
+            self.complete_tool = CompleteTool()
 
         if docker_container_id is not None:
             print(

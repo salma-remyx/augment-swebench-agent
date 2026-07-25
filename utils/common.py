@@ -216,6 +216,15 @@ class DialogMessages:
 
         self.truncation_history_token_cts.append(old_token_ct - new_token_ct)
 
+    def get_message_lists(self) -> list[list[GeneralContentBlock]]:
+        """Read-only view of the raw per-turn message lists.
+
+        Unlike :meth:`get_messages_for_llm_client`, this never triggers the
+        truncation strategy, so callers inspecting past tool results (e.g. an
+        evidence gate) see the un-truncated history.
+        """
+        return list(self._message_lists)
+
     def get_messages_for_llm_client(self) -> LLMMessages:
         """Returns messages in the format the LM client expects."""
 
