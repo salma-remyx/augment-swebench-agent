@@ -9,6 +9,8 @@ calls are made.
 """
 
 import logging
+import json
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -212,6 +214,50 @@ def test_report_rejects_when_pass_to_pass_regresses():
     assert verdict.admissible is False
 
 
+# The native SWE-bench report.json shape that run_evaluation actually emits:
+# per-instance "tests_status" with success/failure *lists* of test names.
+NATIVE_REPORT_PASS = {
+    "instance-1": {
+        "patch_is_None": False,
+        "tests_status": {
+            "FAIL_TO_PASS": {"success": ["tests/test_new.py::test_it"], "failure": []},
+            "PASS_TO_PASS": {"success": ["tests/test_old.py::test_it"], "failure": []},
+        },
+    }
+}
+
+NATIVE_REPORT_REGRESSION = {
+    "instance-1": {
+        "patch_is_None": False,
+        "tests_status": {
+            "FAIL_TO_PASS": {"success": ["tests/test_new.py::test_it"], "failure": []},
+            "PASS_TO_PASS": {"success": [], "failure": ["tests/test_old.py::test_it"]},
+        },
+    }
+}
+
+
+def test_report_admits_native_tests_status_shape():
+    """The gate accepts the native report.json shape, not just the normalized one."""
+    verdict = evaluate_swebench_report(NATIVE_REPORT_PASS)
+    assert verdict.admissible is True
+    assert "tests/test_new.py::test_it" in verdict.evidence
+    assert "tests/test_old.py::test_it" in verdict.evidence
+
+
+def test_report_rejects_native_pass_to_pass_regression():
+    verdict = evaluate_swebench_report(NATIVE_REPORT_REGRESSION)
+    assert verdict.admissible is False
+    assert "tests/test_old.py::test_it" in verdict.evidence
+
+
+def test_report_rejects_native_shape_with_no_tests():
+    report = {"instance-1": {"tests_status": {}}}
+    verdict = evaluate_swebench_report(report)
+    assert verdict.admissible is False
+    assert "no tests" in verdict.reason
+
+
 def test_agent_wires_gate_when_enforced(tmp_path):
     """Agent wires the evidence gate into CompleteTool only when requested."""
     workspace = WorkspaceManager(root=Path(tmp_path))
@@ -237,3 +283,77 @@ def test_agent_wires_gate_when_enforced(tmp_path):
 
     assert enforced.complete_tool.evidence_gate is evaluate_dialog
     assert plain.complete_tool.evidence_gate is None
+
+
+def _import_runner_module():
+    """Import the SWE-bench runner, stubbing heavy optional deps if absent.
+
+    ``run_agent_on_swebench_problem`` imports ``datasets`` and ``docker`` at
+    module level; neither is in requirements.txt, and the tests below never
+    reach the code paths that use them, so stubs keep this suite runnable in
+    the lean test environment while exercising the real wiring.
+    """
+    for optional_dep in ("datasets", "docker", "huggingface_hub"):
+        try:
+            __import__(optional_dep)
+        except ImportError:
+            sys.modules[optional_dep] = MagicMock()
+    import run_agent_on_swebench_problem
+
+    return run_agent_on_swebench_problem
+
+
+def _make_eval_workspace(workspace: Path, problem_id: str, report: dict) -> None:
+    """Lay down the eval artifacts run_eval_on_single_problem consumes."""
+    (workspace / f"augment-agent.{problem_id}.json").write_text(
+        json.dumps({"resolved_ids": [problem_id]})
+    )
+    report_dir = (
+        workspace
+        / "logs"
+        / "run_evaluation"
+        / problem_id
+        / "augment-agent"
+        / problem_id
+    )
+    report_dir.mkdir(parents=True)
+    (report_dir / "report.json").write_text(json.dumps(report))
+
+
+def test_runner_attaches_gate_verdict_to_eval_outcomes(tmp_path):
+    """run_eval_on_single_problem gates the 'resolved' claim on the instance
+    report and records the structured verdict in eval_outcomes."""
+    runner = _import_runner_module()
+    problem_id = "instance-1"
+    _make_eval_workspace(tmp_path, problem_id, NATIVE_REPORT_PASS)
+    with patch.object(runner, "run_evaluation"):
+        outcomes = runner.run_eval_on_single_problem(problem_id, tmp_path, Console())
+    assert outcomes["is_success"] is True
+    assert outcomes["evidence_gate"]["admissible"] is True
+    assert "tests/test_new.py::test_it" in outcomes["evidence_gate"]["evidence"]
+
+
+def test_runner_flags_visible_pass_hidden_fail(tmp_path):
+    """resolved_ids says resolved, but the granular report shows a PASS_TO_PASS
+    regression -- the gate refuses the claim (the paper's amplification case)."""
+    runner = _import_runner_module()
+    problem_id = "instance-1"
+    _make_eval_workspace(tmp_path, problem_id, NATIVE_REPORT_REGRESSION)
+    with patch.object(runner, "run_evaluation"):
+        outcomes = runner.run_eval_on_single_problem(problem_id, tmp_path, Console())
+    assert outcomes["is_success"] is True  # harness contract unchanged
+    assert outcomes["evidence_gate"]["admissible"] is False
+    assert "tests/test_old.py::test_it" in outcomes["evidence_gate"]["evidence"]
+
+
+def test_runner_omits_verdict_when_no_report(tmp_path):
+    """No instance report on disk -> no gate verdict, is_success still works."""
+    runner = _import_runner_module()
+    problem_id = "instance-1"
+    (tmp_path / f"augment-agent.{problem_id}.json").write_text(
+        json.dumps({"resolved_ids": [problem_id]})
+    )
+    with patch.object(runner, "run_evaluation"):
+        outcomes = runner.run_eval_on_single_problem(problem_id, tmp_path, Console())
+    assert outcomes["is_success"] is True
+    assert "evidence_gate" not in outcomes

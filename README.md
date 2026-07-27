@@ -260,6 +260,14 @@ over evidence the agent already produces (bash test output). The same notion is
 exposed for finished rollouts via `evaluate_swebench_report`, which reads the
 `FAIL_TO_PASS`/`PASS_TO_PASS` `report.json` emitted by `run_evaluation`.
 
+Post-run, `run_agent_on_swebench_problem.py` applies that report gate to each
+finished rollout: `run_eval_on_single_problem` treats membership in
+`resolved_ids` as a claim and attaches a structured `evidence_gate` verdict to
+`eval_outcomes`, printing a warning when the harness reports resolved but the
+granular instance report shows a `FAIL_TO_PASS`/`PASS_TO_PASS` failure (the
+visible-pass/hidden-fail case the paper measures). `is_success` itself is left
+unchanged so downstream aggregation keeps its existing contract.
+
 ## Development
 
 ### Running Tests

@@ -199,22 +199,60 @@ def _status_passed(status: Any) -> bool:
     return str(status).strip().upper() in {"SUCCESS", "PASSED", "PASS", "TRUE", "1"}
 
 
+_INSTANCE_MARKERS = ("fail_to_pass", "pass_to_pass", "tests_status")
+
+
 def _select_instance(report: Any) -> Optional[dict[str, Any]]:
     """Pull the per-instance test-status object out of a SWE-bench report.
 
     Tolerates a bare instance object, a top-level ``{instance_id: {...}}`` map,
-    and missing sections.
+    and missing sections. An instance object is recognized by either the
+    normalized lowercase sections or the native ``tests_status`` block.
     """
     if not isinstance(report, dict):
         return None
-    if "fail_to_pass" in report or "pass_to_pass" in report:
+    if any(marker in report for marker in _INSTANCE_MARKERS):
         return report
     for value in report.values():
-        if isinstance(value, dict) and (
-            "fail_to_pass" in value or "pass_to_pass" in value
+        if isinstance(value, dict) and any(
+            marker in value for marker in _INSTANCE_MARKERS
         ):
             return value
     return None
+
+
+def _status_sections(
+    instance: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Normalize either report flavor to ``(fail_to_pass, pass_to_pass)`` maps.
+
+    Accepts the normalized lowercase shape (``{"fail_to_pass": {name: status}}``)
+    and the native SWE-bench ``tests_status`` shape emitted by
+    ``run_evaluation``, where each uppercase section holds ``success`` /
+    ``failure`` *lists* of test names rather than a name-to-status map.
+    """
+    if "fail_to_pass" in instance or "pass_to_pass" in instance:
+        return (
+            instance.get("fail_to_pass") or {},
+            instance.get("pass_to_pass") or {},
+        )
+    tests_status = instance.get("tests_status")
+    if not isinstance(tests_status, dict):
+        return {}, {}
+    fail_to_pass: dict[str, Any] = {}
+    pass_to_pass: dict[str, Any] = {}
+    for section_key, statuses in (
+        ("FAIL_TO_PASS", fail_to_pass),
+        ("PASS_TO_PASS", pass_to_pass),
+    ):
+        section = tests_status.get(section_key)
+        if not isinstance(section, dict):
+            continue
+        for name in section.get("success") or []:
+            statuses[str(name)] = "SUCCESS"
+        for name in section.get("failure") or []:
+            statuses[str(name)] = "FAILED"
+    return fail_to_pass, pass_to_pass
 
 
 def evaluate_swebench_report(report: Any) -> GateVerdict:
@@ -222,14 +260,14 @@ def evaluate_swebench_report(report: Any) -> GateVerdict:
 
     Admissible iff every ``FAIL_TO_PASS`` and ``PASS_TO_PASS`` test is reported
     as passing. This is the same gate notion applied to ``run_evaluation``'s
-    structured output rather than to in-dialog test runs.
+    structured output rather than to in-dialog test runs. Both the normalized
+    lowercase shape and the native ``tests_status`` report shape are accepted.
     """
     instance = _select_instance(report)
     if instance is None:
         return GateVerdict(False, "report contains no test status to verify", [])
 
-    fail_to_pass = instance.get("fail_to_pass", {}) or {}
-    pass_to_pass = instance.get("pass_to_pass", {}) or {}
+    fail_to_pass, pass_to_pass = _status_sections(instance)
     if not fail_to_pass and not pass_to_pass:
         return GateVerdict(False, "report contains no tests to verify", [])
 
