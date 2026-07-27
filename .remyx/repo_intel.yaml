@@ -25,7 +25,12 @@ observed_landing_zones:
     call_site_specifics: ''
     branch: phoenixrepair-rethinking-repair-strategy-exploration-in-soft
     timestamp: '2026-07-25T01:10:38Z'
-  last_observed: '2026-07-25T01:10:38Z'
+  - arxiv: 2409.12147v2
+    mode: ''
+    call_site_specifics: ''
+    branch: magicore-multi-agent-iterative-coarse-to-fine-refinement-for
+    timestamp: '2026-07-27T23:16:43Z'
+  last_observed: '2026-07-27T23:16:43Z'
 - path: tools/
   shape_tags:
   - registry-add
@@ -61,4 +66,4 @@ rejected_shapes:
   - arxiv: 2403.16354v5
     timestamp: '2026-07-27T03:57:58Z'
 coordination_signals: []
-last_updated: '2026-07-27T03:57:58Z'
+last_updated: '2026-07-27T23:16:43Z'
