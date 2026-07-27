@@ -53,6 +53,12 @@ observed_landing_zones:
     branch: proof-or-stop-don-t-trust-the-agent-trust-the-evidence----lo
     timestamp: '2026-07-25T19:43:50Z'
   last_observed: '2026-07-25T19:43:50Z'
-rejected_shapes: []
+rejected_shapes:
+- shape_tag: null
+  reason_code: null
+  reason_summary: ''
+  observed:
+  - arxiv: 2403.16354v5
+    timestamp: '2026-07-27T03:57:58Z'
 coordination_signals: []
-last_updated: '2026-07-25T19:43:50Z'
+last_updated: '2026-07-27T03:57:58Z'
