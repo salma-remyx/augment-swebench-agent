@@ -239,6 +239,34 @@ python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path res
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
 
+#### Coarse-to-fine refinement (`--refine`)
+
+Pass `--refine` (with `--verifier`) to add a refinement stage on top of
+candidate selection. After the verifier selects the best candidate, MAgICoRe
+coarse-to-fine refinement decides whether to refine it: problems whose
+candidate solutions agree (high consensus, "easy") are returned untouched,
+while problems whose candidates disagree (low consensus, "hard") go through an
+iterative reviewer -> solver loop that rewrites the diff from LLM-generated
+feedback. Gating refinement on consensus is the point of the method — refining
+*every* problem over-corrects and lowers overall accuracy. This mechanism is
+adapted from *MAgICoRe* (arXiv:2409.12147); see `utils/solution_refiner.py` and
+`prompts/refiner_prompt.py`.
+
+```bash
+python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --verifier --refine
+```
+
+The paper estimates problem difficulty by clustering the sampled solutions and
+checking for a dominant cluster, and its solver is a full tool-using agent that
+re-runs against the target repo. The ensembler stage hosts neither, so two
+components are substituted while the core mechanism (consensus gate,
+reviewer/solver roles, iterative early stop) is kept intact: the gate uses a
+parameter-free candidate-similarity consensus proxy
+(`consensus_from_candidates`), and the solver is a single LLM turn that revises
+the diff from the reviewer's feedback. `--refine-threshold T` sets the
+consensus cutoff below which refinement fires (default `0.5`); results carry a
+`was_refined` flag.
+
 ## Development
 
 ### Running Tests

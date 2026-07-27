@@ -19,12 +19,16 @@ from typing import Dict, List, Any, Optional, Callable
 from tqdm import tqdm
 
 from prompts.ensembler_prompt import build_ensembler_prompt
+from utils import solution_refiner
 from utils.llm_client import get_client, TextPrompt
 from utils.solution_verifier import select as verifier_select
 
 # Optional selector with the (instruction, candidates) -> index contract
 # of utils.solution_verifier; replaces the single-shot o1 pick.
 Selector = Callable[[str, List[str]], Optional[int]]
+
+# Optional refiner: (instruction, candidates, selected_index, selected_diff) -> refined_diff.
+Refiner = Callable[[str, List[str], Optional[int], Optional[str]], Optional[str]]
 
 MAX_TOKENS = 16384
 TEMPERATURE = 0.0
@@ -62,6 +66,18 @@ def parse_args():
         help="Repeated-evaluation count (n_evaluations) for --verifier: score "
         "each directed pair this many times (with sampling) and average to "
         "reduce scoring variance (default: 8, matching the paper)",
+    )
+    parser.add_argument(
+        "--refine",
+        action="store_true",
+        help="Refine the verifier-selected candidate with the MAgICoRe "
+        "coarse-to-fine loop when candidate consensus is low (Claude Sonnet 4)",
+    )
+    parser.add_argument(
+        "--refine-threshold",
+        type=float,
+        default=solution_refiner.DEFAULT_CONSENSUS_THRESHOLD,
+        help="Consensus below which --refine fires (default: %(default)s)",
     )
     return parser.parse_args()
 
@@ -102,6 +118,7 @@ def process_problem(
     problem_index: int,
     total_problems: int,
     selector: Optional[Selector] = None,
+    refiner: Optional[Refiner] = None,
 ) -> Dict[str, Any]:
     """Process a single problem using the LLM.
 
@@ -110,6 +127,7 @@ def process_problem(
         problem_index: The index of the problem (for logging)
         total_problems: The total number of problems (for logging)
         selector: Optional verifier selector (see utils.solution_verifier).
+        refiner: Optional coarse-to-fine refiner (utils.solution_refiner).
 
     Returns:
         A dictionary containing the result for the problem
@@ -142,6 +160,12 @@ def process_problem(
             )
             solution_index = None
         selected_diff = diffs[solution_index] if solution_index is not None else None
+        was_refined = False
+        if refiner is not None and selected_diff is not None:
+            refined = refiner(instruction, diffs, solution_index, selected_diff)
+            if refined is not None:
+                selected_diff = refined
+                was_refined = True
         return {
             "id": problem.get("id", f"Problem {problem_index + 1}"),
             "instruction": instruction,
@@ -149,6 +173,7 @@ def process_problem(
             "selected_diff_index": solution_index,
             "selected_diff": selected_diff,
             "is_eval_success": _eval_success(eval_outcomes, solution_index),
+            "was_refined": was_refined,
         }
 
     # Majority-vote path: create the o1 client lazily so the verifier path
@@ -214,6 +239,7 @@ def ensemble_problems(
     problems: List[Dict[str, Any]],
     num_workers: int = 8,
     selector: Optional[Selector] = None,
+    refiner: Optional[Refiner] = None,
 ) -> List[Dict[str, Any]]:
     """Ensemble problems using a thread pool for parallel processing.
 
@@ -221,6 +247,7 @@ def ensemble_problems(
         problems: List of problems to process
         num_workers: Number of worker threads to use
         selector: Optional verifier selector forwarded to ``process_problem``
+        refiner: Optional refiner forwarded to ``process_problem``
 
     Returns:
         List of results for each problem
@@ -246,7 +273,8 @@ def ensemble_problems(
         results = list(
             tqdm(
                 executor.map(
-                    lambda x: process_problem(*x, selector=selector), problem_data
+                    lambda x: process_problem(*x, selector=selector, refiner=refiner),
+                    problem_data,
                 ),
                 total=len(problems),
                 desc="Processing problems",
@@ -259,6 +287,10 @@ def ensemble_problems(
 def main():
     """Main function."""
     args = parse_args()
+
+    if args.refine and not args.verifier:
+        print("Error: --refine requires --verifier (refines the selected candidate)")
+        sys.exit(1)
 
     # --verifier selects candidates via LLM-as-a-Verifier scoring (Claude
     # Sonnet 4); otherwise fall back to the single-shot o1 majority vote.
@@ -282,6 +314,22 @@ def main():
 
         selector = _verifier_selector
 
+    refiner: Optional[Refiner] = None
+    if args.refine:
+        refine_client = get_client("anthropic-direct")
+
+        def _refiner(instruction, candidates, selected_index, selected_diff):
+            return solution_refiner.refine_or_none(
+                instruction,
+                candidates,
+                selected_index,
+                selected_diff,
+                client=refine_client,
+                threshold=args.refine_threshold,
+            )
+
+        refiner = _refiner
+
     # Load problems from JSON file
     problems = load_problems(args.input_jsonl_path)
 
@@ -289,7 +337,9 @@ def main():
     output_path = args.output_path or "ensembler_results.json"
 
     # Ensemble problems using thread pool
-    results = ensemble_problems(problems, num_workers=args.workers, selector=selector)
+    results = ensemble_problems(
+        problems, num_workers=args.workers, selector=selector, refiner=refiner
+    )
 
     # get success rate
     success_rate = sum([result["is_eval_success"] for result in results]) / len(results)
