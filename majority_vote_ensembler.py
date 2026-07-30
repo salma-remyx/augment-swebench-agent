@@ -21,6 +21,7 @@ from tqdm import tqdm
 from prompts.ensembler_prompt import build_ensembler_prompt
 from utils.llm_client import get_client, TextPrompt
 from utils.solution_verifier import select as verifier_select
+from utils.voting_selector import select as voting_select
 
 # Optional selector with the (instruction, candidates) -> index contract
 # of utils.solution_verifier; replaces the single-shot o1 pick.
@@ -62,6 +63,29 @@ def parse_args():
         help="Repeated-evaluation count (n_evaluations) for --verifier: score "
         "each directed pair this many times (with sampling) and average to "
         "reduce scoring variance (default: 8, matching the paper)",
+    )
+    parser.add_argument(
+        "--voting",
+        action="store_true",
+        help="Rank candidates with multi-judge voting/consensus (Claude Sonnet "
+        "4) instead of the single-shot o1 majority vote",
+    )
+    parser.add_argument(
+        "--voting-protocol",
+        type=str,
+        default="voting",
+        choices=["voting", "consensus"],
+        help="Decision protocol for --voting: 'voting' (plurality of "
+        "independent judge picks) or 'consensus' (a chair agent makes the "
+        "final call from the panel's votes). Adapted from 'Voting or "
+        "Consensus?' (arXiv:2502.19130), which finds voting best for "
+        "reasoning tasks (default: voting)",
+    )
+    parser.add_argument(
+        "--judges",
+        type=int,
+        default=5,
+        help="Number of independent judges for --voting (default: 5)",
     )
     return parser.parse_args()
 
@@ -261,8 +285,9 @@ def main():
     args = parse_args()
 
     # --verifier selects candidates via LLM-as-a-Verifier scoring (Claude
+    # Sonnet 4); --voting selects via multi-judge voting/consensus (also Claude
     # Sonnet 4); otherwise fall back to the single-shot o1 majority vote.
-    if args.verifier:
+    if args.verifier or args.voting:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             print("Error: ANTHROPIC_API_KEY environment variable is not set")
             sys.exit(1)
@@ -281,6 +306,17 @@ def main():
             )
 
         selector = _verifier_selector
+    elif args.voting:
+
+        def _voting_selector(instruction: str, candidates: List[str]) -> Optional[int]:
+            return voting_select(
+                instruction,
+                candidates,
+                protocol=args.voting_protocol,
+                n_judges=args.judges,
+            )
+
+        selector = _voting_selector
 
     # Load problems from JSON file
     problems = load_problems(args.input_jsonl_path)

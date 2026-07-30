@@ -239,6 +239,27 @@ python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path res
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
 
+#### Multi-judge voting / consensus selection (`--voting`)
+
+Pass `--voting` to select candidates with multi-judge voting or consensus (Claude
+Sonnet 4) instead of the single-shot o1 majority vote. `--judges N` independent
+judges each independently pick one candidate; the picks are then aggregated by a
+decision-making protocol. With `--voting-protocol voting` (the default) the
+plurality winner is selected; with `--voting-protocol consensus` a chair agent
+sees the panel's vote tally and makes the final call. The aggregation protocol is
+the only thing that differs between the two, so they compare head-to-head. This
+is adapted from *Voting or Consensus? Decision-Making in Multi-Agent Debate*
+(arXiv:2502.19130), which finds voting best for reasoning tasks; see
+`utils/voting_selector.py`.
+
+```bash
+python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --voting
+python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path results.json --voting --voting-protocol consensus --judges 7
+```
+
+This adds a third selection strategy (multi-judge voting/consensus) alongside the
+single-shot o1 pick and the pairwise verifier, all on the same candidate set.
+
 ## Development
 
 ### Running Tests
