@@ -6,6 +6,7 @@ from utils.common import (
     LLMTool,
     ToolImplOutput,
 )
+from utils.evidence_gate import EvidenceGate, format_stop_message
 
 
 class CompleteTool(LLMTool):
@@ -24,9 +25,10 @@ class CompleteTool(LLMTool):
         "required": ["answer"],
     }
 
-    def __init__(self):
+    def __init__(self, evidence_gate: Optional[EvidenceGate] = None):
         super().__init__()
         self.answer: str = ""
+        self.evidence_gate = evidence_gate
 
     @property
     def should_stop(self):
@@ -41,6 +43,17 @@ class CompleteTool(LLMTool):
         dialog_messages: Optional[DialogMessages] = None,
     ) -> ToolImplOutput:
         assert tool_input["answer"], "Model returned empty answer"
+        # Proof-or-Stop: the DONE claim is honored only when the evidence gate
+        # admits it. When the gate refuses, leave ``self.answer`` unset so
+        # ``should_stop`` stays False -- the agent loop continues and the stop
+        # message is returned to the model as the tool result.
+        if self.evidence_gate is not None:
+            verdict = self.evidence_gate(dialog_messages)
+            if not verdict.admissible:
+                return ToolImplOutput(
+                    format_stop_message(verdict),
+                    "Completion blocked pending verifiable evidence",
+                )
         self.answer = tool_input["answer"]
         return ToolImplOutput("Task completed", "Task completed")
 

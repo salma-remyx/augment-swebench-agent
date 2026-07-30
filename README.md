@@ -239,6 +239,35 @@ python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path res
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
 
+#### Evidence-gated completion (Proof-or-Stop)
+
+In autonomous (non-interactive) runs the agent's `complete` tool is gated on
+mechanically-verifiable evidence: the `DONE` claim is treated as an unverified
+*claim* and honored only when the dialog contains a fresh passing test run with
+no later failure and no source edit after it (a stale run is rejected, since it
+no longer reflects the current code). When the gate refuses, `should_stop` stays
+`False` and the agent loop continues with a directive to run the test suite and
+call `complete` again -- preventing the visible-pass/hidden-fail "premature
+DONE" that the system prompt's "you should run relevant tests" only suggests.
+This mechanism is adapted from *Proof-or-Stop: Don't Trust the Agent, Trust the
+Evidence* (arXiv:2607.14890); see `utils/evidence_gate.py`.
+
+The gate is on for autonomous runs and off for interactive runs (a human is in
+the loop), wired via `Agent(enforce_completion_gate=...)` in `cli.py`. The
+paper's learned control policy, receipt-bundle tamper rejection, and ablation
+harness are out of scope here; the gate is a parameter-free mechanical check
+over evidence the agent already produces (bash test output). The same notion is
+exposed for finished rollouts via `evaluate_swebench_report`, which reads the
+`FAIL_TO_PASS`/`PASS_TO_PASS` `report.json` emitted by `run_evaluation`.
+
+Post-run, `run_agent_on_swebench_problem.py` applies that report gate to each
+finished rollout: `run_eval_on_single_problem` treats membership in
+`resolved_ids` as a claim and attaches a structured `evidence_gate` verdict to
+`eval_outcomes`, printing a warning when the harness reports resolved but the
+granular instance report shows a `FAIL_TO_PASS`/`PASS_TO_PASS` failure (the
+visible-pass/hidden-fail case the paper measures). `is_success` itself is left
+unchanged so downstream aggregation keeps its existing contract.
+
 ## Development
 
 ### Running Tests

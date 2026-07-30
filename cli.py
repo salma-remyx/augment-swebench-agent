@@ -135,6 +135,10 @@ def main():
         max_turns=MAX_TURNS,
         ask_user_permission=args.needs_permission,
         docker_container_id=args.docker_container_id,
+        # Autonomous (problem-statement) runs gate the DONE claim on verifiable
+        # test evidence (Proof-or-Stop); interactive runs trust the human in
+        # the loop.
+        enforce_completion_gate=args.problem_statement is not None,
     )
 
     if args.problem_statement is not None:

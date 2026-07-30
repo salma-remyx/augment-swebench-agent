@@ -14,6 +14,7 @@ import sys
 import json
 import argparse
 from pathlib import Path
+from typing import Any
 from multiprocessing import Pool, Manager
 import time
 import numpy as np
@@ -27,12 +28,26 @@ from utils.common import generate_patch
 from cli import main as cli_main
 import uuid
 from utils.swebench_eval_utils import get_dataset_name, run_evaluation
+from utils.evidence_gate import evaluate_swebench_report
+
+
+def _load_instance_report(workspace_path: Path, problem_id: str):
+    """Find the per-instance ``report.json`` that ``run_evaluation`` emits."""
+    logs_dir = workspace_path / "logs" / "run_evaluation" / problem_id
+    if not logs_dir.exists():
+        return None
+    for report_file in sorted(logs_dir.rglob("report.json")):
+        try:
+            return json.loads(report_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
 
 
 def run_eval_on_single_problem(problem_id: str, workspace_path: Path, console: Console):
     eval_file = None
 
-    eval_outcomes = {
+    eval_outcomes: dict[str, Any] = {
         "is_success": False,
     }
 
@@ -52,6 +67,22 @@ def run_eval_on_single_problem(problem_id: str, workspace_path: Path, console: C
         eval_dict = json.loads(eval_file.read_text())
         eval_outcomes["is_success"] = problem_id in eval_dict["resolved_ids"]
         console.print(f"Evaluated {problem_id} successfully.")
+        # Proof-or-Stop: treat "resolved" as a claim and gate it on the
+        # granular FAIL_TO_PASS/PASS_TO_PASS evidence in the instance report,
+        # so a visible-pass/hidden-fail result is surfaced, not just counted.
+        report = _load_instance_report(workspace_path, problem_id)
+        if report is not None:
+            verdict = evaluate_swebench_report(report)
+            eval_outcomes["evidence_gate"] = {
+                "admissible": verdict.admissible,
+                "reason": verdict.reason,
+                "evidence": verdict.evidence,
+            }
+            if eval_outcomes["is_success"] and not verdict.admissible:
+                console.print(
+                    f"Evidence gate refused the 'resolved' claim for "
+                    f"{problem_id}: {verdict.reason}"
+                )
     except FileNotFoundError as exc:
         console.print(f"Failed to report results for {problem_id}")
         console.print(exc)
