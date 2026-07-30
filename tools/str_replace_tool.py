@@ -11,6 +11,10 @@ from utils.indent_utils import (
     match_indent,
     match_indent_by_first_line,
 )
+from utils.line_anchored_feedback import (
+    build_duplicate_feedback,
+    build_no_match_feedback,
+)
 from utils.workspace_manager import WorkspaceManager
 from utils.common import (
     DialogMessages,
@@ -498,8 +502,10 @@ Notes for using the `str_replace` command:\n
         occurrences = content.count(old_str)
 
         if occurrences == 0:
+            feedback = build_no_match_feedback(content, old_str)
+            suffix = f"\n{feedback}" if feedback else ""
             raise ToolError(
-                f"No replacement was performed, old_str \n ```\n{old_str}\n```\n did not appear verbatim in {path}."
+                f"No replacement was performed, old_str \n ```\n{old_str}\n```\n did not appear verbatim in {path}.{suffix}"
             )
         elif occurrences > 1:
             file_content_lines = content.split("\n")
@@ -508,8 +514,10 @@ Notes for using the `str_replace` command:\n
                 for idx, line in enumerate(file_content_lines)
                 if old_str in line
             ]
+            feedback = build_duplicate_feedback(content, lines)
+            suffix = f"\n{feedback}" if feedback else ""
             raise ToolError(
-                f"No replacement was performed. Multiple occurrences of old_str \n ```\n{old_str}\n```\n in lines {lines}. Please ensure it is unique"
+                f"No replacement was performed. Multiple occurrences of old_str \n ```\n{old_str}\n```\n in lines {lines}. Please ensure it is unique{suffix}"
             )
 
         new_content = content.replace(old_str, new_str)
