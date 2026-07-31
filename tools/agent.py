@@ -7,6 +7,7 @@ from utils.common import (
     ToolImplOutput,
 )
 from utils.llm_client import LLMClient, TextResult
+from utils.revision_contract import RevisionContract
 from utils.workspace_manager import WorkspaceManager
 from tools.complete_tool import CompleteTool
 from prompts.system_prompt import SYSTEM_PROMPT
@@ -74,6 +75,9 @@ try breaking down the task into smaller steps and call this tool multiple times.
         self.max_output_tokens = max_output_tokens_per_turn
         self.max_turns = max_turns
         self.workspace_manager = workspace_manager
+        # State-bound evidence ledger: binds test traces to code states and
+        # surfaces stale traces on revision (arXiv:2607.24604, Mode 2 port).
+        self.revision_contract = RevisionContract(workspace_root=workspace_manager.root)
         self.interrupted = False
         self.dialog = DialogMessages(
             logger_for_agent_logs=logger_for_agent_logs,
@@ -206,6 +210,15 @@ try breaking down the task into smaller steps and call this tool multiple times.
                     else:
                         tool_result = result
 
+                    # State-bound evidence: bind this tool's result to the exact
+                    # code state and surface a note if a revision rests on a
+                    # stale test trace (arXiv:2607.24604).
+                    evidence_note = self.revision_contract.observe_tool(
+                        tool_call, tool_result
+                    )
+                    if evidence_note:
+                        tool_result = f"{tool_result}\n\n{evidence_note}"
+
                     self.dialog.add_tool_call_result(tool_call, tool_result)
 
                     if self.complete_tool.should_stop:
@@ -280,6 +293,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
         else:
             self.dialog.clear()
             self.interrupted = False
+            self.revision_contract.reset()
 
         tool_input = {
             "instruction": instruction,

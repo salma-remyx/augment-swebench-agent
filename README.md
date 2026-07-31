@@ -19,6 +19,7 @@ Since Anthropic's models are currently state-of-the-art on code, we used Claude 
 - Majority vote ensembler for selecting the best solution from multiple candidates
 - Support for running agent in a Docker container
 - Support for running SWE-bench eval harness
+- State-bound evidence and admission receipts for the generate-test-revise loop (detects stale test traces after code edits)
 
 ## Installation
 
@@ -238,6 +239,35 @@ python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path res
 
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
+
+### State-Bound Revision Evidence
+
+The agent's generate-test-revise loop keeps a *state-bound evidence ledger*. Each
+tool result is bound to the exact code state it ran against; when a revision
+(`str_replace_editor`) is made after a test run, the loop detects that the
+captured test trace is now **stale** (the code changed since the tests ran) and
+appends an advisory note to the tool result telling the model to re-run the tests
+against the current state before treating their result as evidence. The ledger
+also preserves the last code state at which tests were run (a verified checkpoint)
+and emits auditable admission receipts. It is wired into the loop automatically,
+with no CLI flag.
+
+This mechanism is adapted from *Looping Is Not Reliability: State-Bound Evidence
+and Typed Revision Contracts for Agentic Code Repair* (arXiv:2607.24604); see
+`utils/revision_contract.py`. The paper's central finding is that looping gives no
+reliability guarantee: a correct patch is often lost when a later revision rests
+on stale test traces captured against an older code state. This port implements
+the paper's mechanically-enforceable subset (state binding, stale-trace
+detection, admission receipts) as a conformance artifact -- it makes stale
+evidence *detectable* and surfaces it; it does not by itself claim improved repair
+competence, which the paper is explicit it does not claim.
+
+Two target-native substitutions (Mode 2): the paper's "exact code state" is a
+bounded, deterministic content digest over tracked source files rather than a full
+snapshot, and verifier evidence is the agent's own test-command output (identified
+by command pattern, since the loop threads only the tool-output string, not the
+bash exit code). The paper's sealed-study / benchmark harness is out of scope
+here -- evaluation belongs in a downstream PR.
 
 ## Development
 
