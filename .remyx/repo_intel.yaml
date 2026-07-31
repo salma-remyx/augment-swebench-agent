@@ -35,7 +35,12 @@ observed_landing_zones:
     call_site_specifics: ''
     branch: voting-or-consensus-decision-making-in-multi-agent-debate
     timestamp: '2026-07-30T15:11:19Z'
-  last_observed: '2026-07-30T15:11:19Z'
+  - arxiv: 2607.24604v1
+    mode: ''
+    call_site_specifics: ''
+    branch: looping-is-not-reliability-state-bound-evidence-and-typed-re
+    timestamp: '2026-07-31T22:24:11Z'
+  last_observed: '2026-07-31T22:24:11Z'
 - path: tools/
   shape_tags:
   - registry-add
@@ -71,4 +76,4 @@ rejected_shapes:
   - arxiv: 2403.16354v5
     timestamp: '2026-07-27T03:57:58Z'
 coordination_signals: []
-last_updated: '2026-07-30T15:11:19Z'
+last_updated: '2026-07-31T22:24:11Z'
