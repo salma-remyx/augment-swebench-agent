@@ -40,7 +40,12 @@ observed_landing_zones:
     call_site_specifics: ''
     branch: looping-is-not-reliability-state-bound-evidence-and-typed-re
     timestamp: '2026-07-31T22:24:11Z'
-  last_observed: '2026-07-31T22:24:11Z'
+  - arxiv: 2607.28587v1
+    mode: ''
+    call_site_specifics: ''
+    branch: paichecker-uncovering-and-checking-pr-issue-misalignment-in-
+    timestamp: '2026-08-04T16:26:12Z'
+  last_observed: '2026-08-04T16:26:12Z'
 - path: tools/
   shape_tags:
   - registry-add
@@ -78,4 +83,4 @@ rejected_shapes:
   - arxiv: 2505.16901v4
     timestamp: '2026-08-01T12:32:02Z'
 coordination_signals: []
-last_updated: '2026-08-01T12:32:02Z'
+last_updated: '2026-08-04T16:26:12Z'
