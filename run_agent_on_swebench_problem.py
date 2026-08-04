@@ -27,6 +27,7 @@ from utils.common import generate_patch
 from cli import main as cli_main
 import uuid
 from utils.swebench_eval_utils import get_dataset_name, run_evaluation
+from utils.pr_issue_alignment import is_pr_issue_misaligned
 
 
 def run_eval_on_single_problem(problem_id: str, workspace_path: Path, console: Console):
@@ -198,6 +199,15 @@ def main():
         default=8,
         help="Number of candidate solutions to generate for each example",
     )
+    parser.add_argument(
+        "--filter-misaligned",
+        action="store_true",
+        help=(
+            "Skip instances flagged as PR-Issue misaligned by the "
+            "utils.pr_issue_alignment heuristic (PAIChecker-inspired). Off by "
+            "default; does not change results when unset."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -262,6 +272,13 @@ def main():
             problem = examples.iloc[i]
             problem_id = problem["instance_id"]
             problem_statement = problem["problem_statement"]
+
+            if args.filter_misaligned and is_pr_issue_misaligned(problem):
+                console.print(
+                    f"  {problem_id}: flagged as PR-Issue misaligned "
+                    "(utils.pr_issue_alignment); skipping"
+                )
+                continue
 
             console.print(f"\nProcessing example {i + 1}/{num_examples}")
 

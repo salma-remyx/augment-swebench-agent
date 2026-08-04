@@ -19,6 +19,7 @@ Since Anthropic's models are currently state-of-the-art on code, we used Claude 
 - Majority vote ensembler for selecting the best solution from multiple candidates
 - Support for running agent in a Docker container
 - Support for running SWE-bench eval harness
+- PR-Issue alignment pre-filter (adapted from PAIChecker) to flag SWE-bench instances whose gold patch / test oracle look misaligned with the issue
 
 ## Installation
 
@@ -117,6 +118,7 @@ You can increase `--num-examples` and `--num-candidate-solutions` to run on more
 - `--shard-id`: Shard ID to run (0-indexed, default: 0)
 - `--num-processes`: Number of processes to use for each example (default: 8)
 - `--num-candidate-solutions`: Number of candidate solutions to generate for each example (default: 8)
+- `--filter-misaligned`: Skip instances flagged as PR-Issue misaligned by the `utils.pr_issue_alignment` heuristic (off by default; opt-in pre-filter)
 
 ### Running on more examples.
 
