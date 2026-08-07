@@ -13,6 +13,7 @@ Guidelines:
 - When possible, choose the simpler solution.
 - Use your bash tool to set up any necessary environment variables, such as those needed to run tests.
 - You should run relevant tests to verify that your changes work.
+- When the right edit location is not obvious, explore multiple candidate locations before committing to a fix: use the candidate_location_explorer tool to register 2-3 distinct candidate edit locations, record each repair attempt's test outcome, and reflect on failures. Before writing your final patch, call its summary action so the distilled insights from all attempts guide the fix.
 
 Make sure to call the complete tool when you are done with the task, or when you have an answer to the question.
 """

@@ -273,3 +273,16 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Candidate Location Explorer
+
+The agent ships with a `candidate_location_explorer` tool that structures
+repair-strategy exploration before a fix is committed. When the right edit
+location is not obvious, the tool lets the agent register 2-3 distinct
+candidate edit locations, record each repair attempt's test outcome, and
+distill reflections from the attempt history. Calling its `summary` action
+replays every location, attempt, and insight so the final patch is guided by
+what was learned across all prior attempts. The tool grounds each proposed
+location against the workspace and flags paths that do not exist. This
+capability is adapted from the multi-location sampling and iterative
+reflection ideas in PhoenixRepair.
