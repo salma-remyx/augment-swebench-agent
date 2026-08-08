@@ -239,6 +239,35 @@ python majority_vote_ensembler.py example_ensembler_data.jsonl --output_path res
 This makes it straightforward to A/B test the two selection strategies on the
 same candidate set.
 
+### Trajectory Debugger
+
+The Trajectory Debugger is a post-hoc diagnostic that attributes the *critical
+failure* in a failed agent rollout. For each failed trajectory it locates the
+earliest decisive error responsible for the final failure — tracing each
+error's resolution status across the rest of the trajectory and surfacing it
+with verbatim evidence — the actionable feedback that helps refine the agent's
+prompts and error handling. It is adapted from *TrajDebug*
+(arXiv:2608.06346); see `utils/trajectory_error_attribution.py`.
+
+It consumes the artifacts a rollout already produces (`agent_logs.txt` plus an
+`is_success` verdict) and requires no LLM call: error identification uses a
+parameter-free evidence detector (Python tracebacks, pytest failures, raised
+exceptions, str_replace / bash tool errors, timeouts), and critical attribution
+traces each error's resolution status and terminal impact.
+
+#### Usage
+
+```bash
+python trajectory_debugger.py path/to/rollout/agent_logs.txt --no-is-success
+python trajectory_debugger.py path/to/rollout/ --eval-json augment-agent.<problem_id>.json --output report.json
+```
+
+Where:
+- the positional path is `agent_logs.txt` or a rollout directory containing it
+- `--eval-json` reads the rollout's `is_success` verdict (`is_success` bool or `resolved_ids` list)
+- `--is-success` / `--no-is-success` sets the verdict explicitly (default: unknown, treated as failed)
+- `--output` writes a JSON attribution report
+
 ## Development
 
 ### Running Tests
